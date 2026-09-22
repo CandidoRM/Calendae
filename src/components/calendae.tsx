@@ -12,9 +12,10 @@ import { HolidaysTab } from "@/components/holidays-tab";
 import { MonthGrid } from "@/components/month-grid";
 import { Button } from "@/components/ui/button";
 import { redirectToLoginIfRequired, useRefetchWhenConnectorReady } from "@/lib/app-data";
-import { useCurrentUserState } from "@/lib/auth/use-current-user";
+import { setCalendaeLoginOff, useCalendaeSession } from "@/lib/calendae-auth";
 import { pullCloud, pushCloud } from "@/lib/cloud";
-import { packCalendae } from "@/lib/guardar";
+import { applyCalendaeSave, clearLocalCalendae, packCalendae } from "@/lib/guardar";
+import { signOut } from "@/lib/auth/client";
 import { CONTACT_MAX, fitContact, pickDeviceContact } from "@/lib/contacts";
 import {
   DEFAULT_SETTINGS,
@@ -487,6 +488,63 @@ function HolidayNote({ iso, events }: { iso: string; events: CalEvent[] }) {
   return <p className="cal-holiday-note">{label}</p>;
 }
 
+function ArquivoIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <rect x="5" y="3.8" width="14" height="16.4" rx="1" stroke="currentColor" strokeWidth="1.7" />
+      <path d="M5 9.2h14M5 14.4h14" stroke="currentColor" strokeWidth="1.5" />
+      <path
+        d="M10.6 6.4h2.8M10.6 11.7h2.8M10.6 16.9h2.8"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function foldPt(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .trim();
+}
+
+function titleHits(title: string, query: string) {
+  const q = foldPt(query);
+  if (q.length < 2) return false;
+  const folded = foldPt(title);
+  if (folded.startsWith(q)) return true;
+  return folded.split(/[^a-z0-9]+/).some((word) => word.startsWith(q));
+}
+
+function newestTitleMatch(list: CalEvent[], query: string, skipId?: string | null) {
+  const hits = list.filter((event) => event.id !== skipId && titleHits(event.title, query));
+  if (!hits.length) return null;
+  hits.sort((a, b) => (a.iso < b.iso ? 1 : a.iso > b.iso ? -1 : 0));
+  return hits[0];
+}
+
+function recallFromArchive(
+  query: string,
+  agenda: CalEvent[],
+  historyList: CalEvent[],
+  skipId?: string | null,
+) {
+  const q = query.trim();
+  if (foldPt(q).length < 2) return null;
+  const live = agenda.filter(
+    (event) => event.source === "local" || event.source === "period" || event.source === "google",
+  );
+  const birthdays = agenda.filter((event) => event.source === "birthday");
+  return (
+    newestTitleMatch(live, q, skipId) ??
+    newestTitleMatch(historyList, q, skipId) ??
+    newestTitleMatch(birthdays, q, skipId)
+  );
+}
+
 function ContactField({
   value,
   onChange,
@@ -586,7 +644,8 @@ export function Calendae() {
   const hideUpTimer = useRef(0);
   const firstLaunch = useRef(false);
   const cloudOnce = useRef(false);
-  const { user, isPending: authPending } = useCurrentUserState();
+  const [cloudStatus, setCloudStatus] = useState<string | null>(null);
+  const { user, isPending: authPending } = useCalendaeSession();
 
   useLayoutEffect(() => {
     firstLaunch.current = !readSettingsRaw();
@@ -683,37 +742,57 @@ export function Calendae() {
   }, [inssStore, hydrated]);
 
   useEffect(() => {
+    if (!user) cloudOnce.current = false;
+  }, [user]);
+
+  useEffect(() => {
     if (!hydrated || authPending || !user || cloudOnce.current) return;
     cloudOnce.current = true;
     void (async () => {
       try {
+        setCloudStatus("Sincronizando…");
         const cloud = await pullCloud();
         const live = packCalendae({
           settings,
           events: localEvents,
           history,
           holidays: holidayStore,
+          inss: inssStore,
         });
         if (!cloud) {
           await pushCloud({ data: live });
+          setCloudStatus("Agenda na conta.");
           return;
         }
         const cloudEvents = Array.isArray(cloud.events) ? (cloud.events as CalEvent[]) : [];
         const cloudHist = Array.isArray(cloud.history) ? (cloud.history as CalEvent[]) : [];
         const mergedEvents = mergeEventsById(localEvents, cloudEvents);
         const mergedHist = mergeEventsById(history, cloudHist);
+        applyCalendaeSave({
+          ...cloud,
+          events: mergedEvents,
+          history: mergedHist,
+        });
         setLocalEvents(mergedEvents);
         setHistory(mergedHist);
+        setSettings(readSettings());
+        setHolidayStore(readHolidayStore());
+        const inss = readInssStore();
+        applyInssStore(inss);
+        setInssStore(inss);
         await pushCloud({
           data: packCalendae({
-            settings,
+            settings: readSettings(),
             events: mergedEvents,
             history: mergedHist,
-            holidays: holidayStore,
+            holidays: readHolidayStore(),
+            inss,
           }),
         });
+        setCloudStatus("Agenda na conta.");
       } catch {
         cloudOnce.current = false;
+        setCloudStatus("Nuvem falhou. Toque em Login de novo.");
       }
     })();
   }, [hydrated, authPending, user]);
@@ -721,10 +800,20 @@ export function Calendae() {
   useEffect(() => {
     if (!hydrated || !user || !cloudOnce.current) return;
     const wait = window.setTimeout(() => {
-      void pushCloud({ data: packCalendae() }).catch(() => {});
+      void pushCloud({
+        data: packCalendae({
+          settings,
+          events: localEvents,
+          history,
+          holidays: holidayStore,
+          inss: inssStore,
+        }),
+      })
+        .then(() => setCloudStatus("Agenda na conta."))
+        .catch(() => setCloudStatus("Nuvem falhou."));
     }, 900);
     return () => window.clearTimeout(wait);
-  }, [localEvents, history, settings, hydrated, user]);
+  }, [localEvents, history, settings, holidayStore, inssStore, hydrated, user]);
 
   useEffect(() => {
     const tick = () => {
@@ -1204,6 +1293,19 @@ export function Calendae() {
     };
   }
 
+  function recallDraft() {
+    const found = recallFromArchive(
+      draftTitle,
+      [...localEvents, ...googleEvents],
+      history,
+      editingEventId,
+    );
+    if (!found) return;
+    setDraftTitle(found.title.slice(0, 45));
+    if (found.place) setDraftPlace(found.place.slice(0, 45));
+    if (found.contact) setDraftContact(found.contact);
+  }
+
   function addEvent() {
     const title = draftTitle.trim();
     if (!title) return;
@@ -1392,6 +1494,19 @@ export function Calendae() {
       node.removeEventListener("pointercancel", onPointerUp);
       node.removeEventListener("wheel", onWheel);
     };
+  }, []);
+
+  useEffect(() => {
+    function onPageWheel(event: WheelEvent) {
+      const page = pageRef.current;
+      if (!page) return;
+      const grid = document.querySelector(".cal-month-grid");
+      if (grid && grid.contains(event.target as Node)) return;
+      if (page.scrollHeight <= page.clientHeight + 1) return;
+      page.scrollTop += event.deltaY;
+    }
+    window.addEventListener("wheel", onPageWheel, { passive: true });
+    return () => window.removeEventListener("wheel", onPageWheel);
   }, []);
 
   useEffect(() => {
@@ -1648,21 +1763,34 @@ export function Calendae() {
                   addEvent();
                 }}
               >
-                <input
-                  value={draftTitle}
-                  maxLength={45}
-                  onChange={(event) => setDraftTitle(event.target.value.slice(0, 45))}
-                  placeholder="Compromisso"
-                  className="h-11 rounded-xl bg-bg px-3 text-sm text-fg shadow-[0_0_0_1px_var(--c-line)] outline-none placeholder:text-muted"
-                  autoFocus
-                />
-                <input
-                  value={draftPlace}
-                  maxLength={45}
-                  onChange={(event) => setDraftPlace(event.target.value.slice(0, 45))}
-                  placeholder="Local"
-                  className="h-11 rounded-xl bg-bg px-3 text-sm text-fg shadow-[0_0_0_1px_var(--c-line)] outline-none placeholder:text-muted"
-                />
+                <div className="flex items-center">
+                  <input
+                    value={draftTitle}
+                    maxLength={45}
+                    onChange={(event) => setDraftTitle(event.target.value.slice(0, 45))}
+                    placeholder="Compromisso"
+                    className="h-11 min-w-0 flex-1 rounded-xl bg-bg px-3 text-sm text-fg shadow-[0_0_0_1px_var(--c-line)] outline-none placeholder:text-muted"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    aria-label="Arquivo"
+                    {...withTip("Arquivo", "flex size-8 shrink-0 items-center justify-center text-fg")}
+                    onClick={recallDraft}
+                  >
+                    <ArquivoIcon className="size-5" />
+                  </button>
+                </div>
+                <div className="flex items-center">
+                  <input
+                    value={draftPlace}
+                    maxLength={45}
+                    onChange={(event) => setDraftPlace(event.target.value.slice(0, 45))}
+                    placeholder="Local"
+                    className="h-11 min-w-0 flex-1 rounded-xl bg-bg px-3 text-sm text-fg shadow-[0_0_0_1px_var(--c-line)] outline-none placeholder:text-muted"
+                  />
+                  <span className="size-8 shrink-0" aria-hidden="true" />
+                </div>
                 <ContactField value={draftContact} onChange={setDraftContact} />
                 <DatePick
                   value={draftDate}
@@ -1807,19 +1935,33 @@ export function Calendae() {
                                 saveEditEvent();
                               }}
                             >
-                              <input
-                                value={draftTitle}
-                                maxLength={45}
-                                onChange={(e) => setDraftTitle(e.target.value.slice(0, 45))}
-                                className="h-11 rounded-xl bg-bg px-3 text-sm text-fg shadow-[0_0_0_1px_var(--c-line)] outline-none"
-                              />
-                              <input
-                                value={draftPlace}
-                                maxLength={45}
-                                onChange={(e) => setDraftPlace(e.target.value.slice(0, 45))}
-                                placeholder="Local"
-                                className="h-11 rounded-xl bg-bg px-3 text-sm text-fg shadow-[0_0_0_1px_var(--c-line)] outline-none placeholder:text-muted"
-                              />
+                              <div className="flex items-center">
+                                <input
+                                  value={draftTitle}
+                                  maxLength={45}
+                                  onChange={(e) => setDraftTitle(e.target.value.slice(0, 45))}
+                                  placeholder="Compromisso"
+                                  className="h-11 min-w-0 flex-1 rounded-xl bg-bg px-3 text-sm text-fg shadow-[0_0_0_1px_var(--c-line)] outline-none placeholder:text-muted"
+                                />
+                                <button
+                                  type="button"
+                                  aria-label="Arquivo"
+                                  {...withTip("Arquivo", "flex size-8 shrink-0 items-center justify-center text-fg")}
+                                  onClick={recallDraft}
+                                >
+                                  <ArquivoIcon className="size-5" />
+                                </button>
+                              </div>
+                              <div className="flex items-center">
+                                <input
+                                  value={draftPlace}
+                                  maxLength={45}
+                                  onChange={(e) => setDraftPlace(e.target.value.slice(0, 45))}
+                                  placeholder="Local"
+                                  className="h-11 min-w-0 flex-1 rounded-xl bg-bg px-3 text-sm text-fg shadow-[0_0_0_1px_var(--c-line)] outline-none placeholder:text-muted"
+                                />
+                                <span className="size-8 shrink-0" aria-hidden="true" />
+                              </div>
                               <ContactField value={draftContact} onChange={setDraftContact} />
                               <DatePick value={draftDate} weekStart={settings.weekStart} onChange={setDraftDate} />
                               <HolidayNote iso={draftDate} events={[...holidays, ...extraHolidays]} />
@@ -2231,6 +2373,33 @@ export function Calendae() {
                     );
                   })
                   .finally(() => setRemindersBusy(false));
+              }}
+              cloudStatus={cloudStatus}
+              onLeaveAccount={async () => {
+                try {
+                  await pushCloud({
+                    data: packCalendae({
+                      settings,
+                      events: localEvents,
+                      history,
+                      holidays: holidayStore,
+                      inss: inssStore,
+                    }),
+                  });
+                } catch {
+                  /* still leave the device */
+                }
+                clearLocalCalendae();
+                setSettings(DEFAULT_SETTINGS);
+                setLocalEvents([]);
+                setHistory([]);
+                setGoogleEvents([]);
+                setHolidayStore(seedHolidayStore());
+                setInssStore({});
+                setCloudStatus(null);
+                cloudOnce.current = false;
+                setCalendaeLoginOff(true);
+                await signOut();
               }}
             />
           </Suspense>

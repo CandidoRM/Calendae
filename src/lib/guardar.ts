@@ -72,6 +72,24 @@ export function applyCalendaeSave(data: CalendaeSave) {
   if (data.remindersFired) writeJson(FIRED_KEY, data.remindersFired);
 }
 
+export function clearLocalCalendae() {
+  const keys = [
+    SETTINGS_KEY,
+    EVENTS_KEY,
+    PERIODS_KEY,
+    HOLIDAYS_KEY,
+    INSS_KEY,
+    HISTORY_KEY,
+    ALMANAC_KEY,
+    FIRED_KEY,
+    "almanaque-settings",
+    "almanaque-events",
+    "almanaque-holidays",
+    "almanaque-periods",
+  ];
+  for (const key of keys) localStorage.removeItem(key);
+}
+
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(IDB_NAME, 1);

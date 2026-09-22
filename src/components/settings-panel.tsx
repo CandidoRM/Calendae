@@ -3,8 +3,8 @@ import { X } from "lucide-react";
 import { A11yHint } from "@/components/a11y-hint";
 import { Button } from "@/components/ui/button";
 import { HeaderMenu } from "@/components/header-menu";
-import { SignInGate, UserButton } from "@/lib/auth/gates";
 import { GROK_PROVIDERS, signIn } from "@/lib/auth/client";
+import { setCalendaeLoginOff, useCalendaeSession } from "@/lib/calendae-auth";
 import {
   CAL_TABS,
   formatHolidaySync,
@@ -82,6 +82,8 @@ type SettingsPanelProps = {
   onA11yHints: (next: boolean) => void;
   onSyncGoogle: () => void;
   onEnableReminders: () => void;
+  cloudStatus?: string | null;
+  onLeaveAccount: () => Promise<void>;
 };
 
 export function SettingsPanel({
@@ -111,6 +113,8 @@ export function SettingsPanel({
   onA11yHints,
   onSyncGoogle,
   onEnableReminders,
+  cloudStatus,
+  onLeaveAccount,
 }: SettingsPanelProps) {
   const [tab, setTab] = useState<SettingsTab>("geral");
   const [weekMenu, setWeekMenu] = useState(false);
@@ -165,26 +169,11 @@ export function SettingsPanel({
                 hint="A agenda sobe pra nuvem nesta conta. No outro aparelho, entre com a mesma."
               >
                 <div className="col-span-2">
-                  <SignInGate
-                    fallback={
-                      <div className="flex flex-col gap-2">
-                        {GROK_PROVIDERS.map((p) => (
-                          <Button
-                            key={p.providerId}
-                            type="button"
-                            variant="line"
-                            className="w-full"
-                            onClick={() => signIn(p.providerId, { callbackURL: "/" })}
-                          >
-                            Continuar com {p.label}
-                          </Button>
-                        ))}
-                      </div>
-                    }
-                  >
-                    <UserButton />
-                  </SignInGate>
+                  <CalendaeLogin onLeaveAccount={onLeaveAccount} />
                 </div>
+                {cloudStatus ? (
+                  <p className="col-span-2 text-pretty text-sm text-muted">{cloudStatus}</p>
+                ) : null}
               </Aba>
               <Aba
                 title="Abas"
@@ -354,6 +343,56 @@ export function SettingsPanel({
           ) : null}
         </div>
       </div>
+    </div>
+  );
+}
+
+function CalendaeLogin({ onLeaveAccount }: { onLeaveAccount: () => Promise<void> }) {
+  const { user, isPending, signedIn } = useCalendaeSession();
+  const [busy, setBusy] = useState(false);
+  if (isPending) return null;
+  if (!signedIn) {
+    return (
+      <div className="flex flex-col gap-2">
+        {GROK_PROVIDERS.map((p) => (
+          <Button
+            key={p.providerId}
+            type="button"
+            variant="line"
+            className="w-full"
+            onClick={() => {
+              setCalendaeLoginOff(false);
+              void signIn(p.providerId, { callbackURL: "/" });
+            }}
+          >
+            Continuar com {p.label}
+          </Button>
+        ))}
+      </div>
+    );
+  }
+  const label = user?.displayName ?? user?.primaryEmail ?? "Conta";
+  return (
+    <div className="flex items-center gap-2">
+      {user?.profileImageUrl ? (
+        <img src={user.profileImageUrl} alt="" className="h-8 w-8 rounded-full object-cover" />
+      ) : (
+        <span className="grid h-8 w-8 place-items-center rounded-full bg-black/10 text-sm font-medium">
+          {label.charAt(0).toUpperCase()}
+        </span>
+      )}
+      <span className="min-w-0 flex-1 truncate text-sm font-medium">{label}</span>
+      <button
+        type="button"
+        disabled={busy}
+        className="cursor-pointer text-sm underline-offset-4 opacity-70 hover:underline disabled:cursor-wait"
+        onClick={() => {
+          setBusy(true);
+          void onLeaveAccount().catch(() => setBusy(false));
+        }}
+      >
+        {busy ? "Saindo…" : "Sair"}
+      </button>
     </div>
   );
 }
