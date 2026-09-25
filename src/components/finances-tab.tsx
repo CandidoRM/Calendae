@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { A11yHint } from "@/components/a11y-hint";
 import { BenefitsTab } from "@/components/benefits-tab";
 import { BoletosBlock } from "@/components/boletos-block";
@@ -22,6 +22,30 @@ function KindMark({ on }: { on: boolean }) {
   return <span aria-hidden="true" className={cn("cal-kind", on && "is-on")} />;
 }
 
+function FinanceFold({
+  title,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="mt-3 border-t border-line">
+      <button type="button" onClick={onToggle} className="flex w-full items-baseline justify-between py-3 text-left">
+        <span className="text-sm font-medium text-fg">{title}</span>
+        <span className="text-xs text-muted">{open ? "fechar" : "abrir"}</span>
+      </button>
+      <div className={cn("cal-event-details", open && "is-open")}>
+        <div className="flex flex-col gap-3 pb-2">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 type FinancesTabProps = {
   year: number;
   month: number;
@@ -33,6 +57,8 @@ type FinancesTabProps = {
   bills: CalEvent[];
   boletos: CalEvent[];
   irpf: CalEvent | null;
+  irpfOn: boolean;
+  onIrpf: (on: boolean) => void;
   irpfLots: IrpfLot[];
   irpfOpen: boolean;
   pis: CalEvent | null;
@@ -96,6 +122,8 @@ export function FinancesTab({
   bills,
   boletos,
   irpf,
+  irpfOn,
+  onIrpf,
   irpfLots,
   irpfOpen,
   pis,
@@ -149,8 +177,17 @@ export function FinancesTab({
 }: FinancesTabProps) {
   const [glyphFlash, pingGlyph] = useGlyphFlash();
   const [adding, setAdding] = useState(false);
+  const [proventos, setProventos] = useState(false);
+  const [despesas, setDespesas] = useState(false);
   const [pisMenu, setPisMenu] = useState(false);
   const [ipvaUfMenu, setIpvaUfMenu] = useState(false);
+
+  useEffect(() => {
+    if (!adding) {
+      setProventos(false);
+      setDespesas(false);
+    }
+  }, [adding]);
 
   return (
     <section className="cal-tab">
@@ -664,7 +701,8 @@ export function FinancesTab({
           ) : null}
       <BenefitsTab
         framed={false}
-        adding={adding}
+        adding={adding && proventos}
+        formSlot={adding && proventos ? "fin-inss" : null}
         year={year}
         month={month}
         today={today}
@@ -675,92 +713,10 @@ export function FinancesTab({
         onUpdate={onUpdate}
         onOpen={onOpenBenefit}
       />
-      {adding ? (
-        <div className="mt-3 flex flex-col gap-2 border-t border-line pt-3">
-          <p className="text-sm font-medium text-fg">Benefícios Sociais</p>
-          <input
-            value={bolsaNis}
-            inputMode="numeric"
-            autoCorrect="off"
-            spellCheck={false}
-            maxLength={11}
-            aria-label="NIS"
-            placeholder="NIS"
-            className="cal-num-field h-11 rounded-xl bg-bg px-3 text-sm text-fg shadow-[0_0_0_1px_var(--c-line)] outline-none placeholder:text-muted"
-            onChange={(event) => onBolsaNis(event.target.value)}
-          />
-          <div className="grid w-full grid-cols-[2.85rem_minmax(0,1fr)_7.25rem_1.65rem] items-center gap-x-2.5">
-            <button
-              type="button"
-              className="col-span-2 flex h-7 items-center gap-3 text-left text-sm"
-              aria-pressed={bolsaOn}
-              onClick={() => onBolsaOn(!bolsaOn)}
-            >
-              <KindMark on={bolsaOn} />
-              Bolsa Família
-            </button>
-            <button
-              type="button"
-              className="col-span-2 flex h-7 items-center gap-3 text-left text-sm"
-              aria-pressed={gasOn}
-              onClick={() => onGasOn(!gasOn)}
-            >
-              <KindMark on={gasOn} />
-              Gás do Povo
-            </button>
-          </div>
-        </div>
-      ) : null}
-      {adding ? (
-        <div className="mt-3 flex flex-col gap-2 border-t border-line pt-3">
-          <p className="text-sm font-medium text-fg">Trabalhistas</p>
-          <div className="cal-kind-pick is-fill">
-            <HeaderMenu
-              label="Mês de nascimento"
-              value={laborMonth ?? 0}
-              options={[
-                { value: 0, label: "Mês de nascimento" },
-                ...MONTHS.map((label, index) => ({ value: index + 1, label })),
-              ]}
-              open={pisMenu}
-              wide
-              fixed
-              soft
-              buttonClassName="cal-kind-btn"
-              optionClassName="cal-kind-option"
-              onOpen={() => setPisMenu(true)}
-              onClose={() => setPisMenu(false)}
-              onPick={(next) => {
-                onLaborMonth(next === 0 ? null : next);
-                setPisMenu(false);
-              }}
-            />
-          </div>
-          <div className="grid w-full grid-cols-[2.85rem_minmax(0,1fr)_7.25rem_1.65rem] items-center gap-x-2.5">
-            <button
-              type="button"
-              className="col-span-2 flex h-7 items-center gap-3 text-left text-sm"
-              aria-pressed={fgtsOn}
-              onClick={() => onFgtsOn(!fgtsOn)}
-            >
-              <KindMark on={fgtsOn} />
-              FGTS
-            </button>
-            <button
-              type="button"
-              className="col-span-2 flex h-7 items-center gap-3 text-left text-sm"
-              aria-pressed={pisOn}
-              onClick={() => onPisOn(!pisOn)}
-            >
-              <KindMark on={pisOn} />
-              PIS/Pasep
-            </button>
-          </div>
-        </div>
-      ) : null}
       <PaymentsTab
         framed={false}
-        adding={adding}
+        adding={adding && despesas}
+        formSlot={adding && despesas ? "fin-pagamentos" : null}
         year={year}
         month={month}
         selectedIso={selectedIso}
@@ -773,7 +729,8 @@ export function FinancesTab({
         onOpen={onOpenBill}
       />
       <BoletosBlock
-        adding={adding}
+        adding={adding && despesas}
+        formSlot={adding && despesas ? "fin-boletos" : null}
         year={year}
         month={month}
         today={today}
@@ -786,61 +743,125 @@ export function FinancesTab({
         onOpen={onOpenBill}
       />
       {adding ? (
-        <div className="mt-3 flex flex-col gap-2 border-t border-line pt-3">
-          <p className="text-sm font-medium text-fg">Veículos</p>
-          <div className="flex items-center gap-2">
-            <div className="cal-kind-pick is-uf">
-              <HeaderMenu
-                label="UF"
-                value={ipvaUf}
-                options={UF_OPTIONS}
-                open={ipvaUfMenu}
-                wide
-                fixed
-                soft
-                buttonClassName="cal-kind-btn"
-                optionClassName="cal-kind-option"
-                onOpen={() => setIpvaUfMenu(true)}
-                onClose={() => setIpvaUfMenu(false)}
-                onPick={(next) => {
-                  onIpvaUf(next);
-                  setIpvaUfMenu(false);
-                }}
+        <>
+          <button
+            type="button"
+            className="mt-3 flex h-7 w-full items-center gap-3 border-t border-line pt-3 text-left text-sm"
+            aria-pressed={irpfOn}
+            onClick={() => onIrpf(!irpfOn)}
+          >
+            <KindMark on={irpfOn} />
+            Declaração de Imposto de Renda
+          </button>
+          <FinanceFold title="Proventos" open={proventos} onToggle={() => setProventos((open) => !open)}>
+            <div id="fin-inss" />
+            <div className="flex flex-col gap-2">
+              <p className="text-sm font-medium text-fg">Benefícios Sociais</p>
+              <input
+                value={bolsaNis}
+                inputMode="numeric"
+                autoCorrect="off"
+                spellCheck={false}
+                maxLength={11}
+                aria-label="NIS"
+                placeholder="NIS"
+                className="cal-num-field h-11 rounded-xl bg-bg px-3 text-sm text-fg shadow-[0_0_0_1px_var(--c-line)] outline-none placeholder:text-muted"
+                onChange={(event) => onBolsaNis(event.target.value)}
               />
+              <div className="grid w-full grid-cols-[2.85rem_minmax(0,1fr)_7.25rem_1.65rem] items-center gap-x-2.5">
+                <button type="button" className="col-span-2 flex h-7 items-center gap-3 text-left text-sm" aria-pressed={bolsaOn} onClick={() => onBolsaOn(!bolsaOn)}>
+                  <KindMark on={bolsaOn} />
+                  Bolsa Família
+                </button>
+                <button type="button" className="col-span-2 flex h-7 items-center gap-3 text-left text-sm" aria-pressed={gasOn} onClick={() => onGasOn(!gasOn)}>
+                  <KindMark on={gasOn} />
+                  Gás do Povo
+                </button>
+              </div>
             </div>
-            <input
-              value={ipvaPlate}
-              maxLength={8}
-              autoCapitalize="characters"
-              autoCorrect="off"
-              spellCheck={false}
-              aria-label="Placa do veículo"
-              placeholder="placa"
-              className="h-11 min-w-0 flex-1 rounded-xl bg-bg px-3 text-sm uppercase text-fg shadow-[0_0_0_1px_var(--c-line)] outline-none placeholder:text-muted"
-              onChange={(event) => onIpvaPlate(event.target.value)}
-            />
-          </div>
-          <div className="grid w-full grid-cols-[2.85rem_minmax(0,1fr)_7.25rem_1.65rem] items-center gap-x-2.5">
-            <button
-              type="button"
-              className="col-span-2 flex h-7 items-center gap-3 text-left text-sm"
-              aria-pressed={ipvaOn}
-              onClick={() => onIpvaOn(!ipvaOn)}
-            >
-              <KindMark on={ipvaOn} />
-              IPVA
-            </button>
-            <button
-              type="button"
-              className="col-span-2 flex h-7 items-center gap-3 text-left text-sm"
-              aria-pressed={licencaOn}
-              onClick={() => onLicencaOn(!licencaOn)}
-            >
-              <KindMark on={licencaOn} />
-              Licenciamento
-            </button>
-          </div>
-        </div>
+            <div className="flex flex-col gap-2">
+              <p className="text-sm font-medium text-fg">Trabalhistas</p>
+              <div className="cal-kind-pick is-fill">
+                <HeaderMenu
+                  label="Mês de nascimento"
+                  value={laborMonth ?? 0}
+                  options={[{ value: 0, label: "Mês de nascimento" }, ...MONTHS.map((label, index) => ({ value: index + 1, label }))]}
+                  open={pisMenu}
+                  wide
+                  fixed
+                  soft
+                  buttonClassName="cal-kind-btn"
+                  optionClassName="cal-kind-option"
+                  onOpen={() => setPisMenu(true)}
+                  onClose={() => setPisMenu(false)}
+                  onPick={(next) => {
+                    onLaborMonth(next === 0 ? null : next);
+                    setPisMenu(false);
+                  }}
+                />
+              </div>
+              <div className="grid w-full grid-cols-[2.85rem_minmax(0,1fr)_7.25rem_1.65rem] items-center gap-x-2.5">
+                <button type="button" className="col-span-2 flex h-7 items-center gap-3 text-left text-sm" aria-pressed={fgtsOn} onClick={() => onFgtsOn(!fgtsOn)}>
+                  <KindMark on={fgtsOn} />
+                  FGTS
+                </button>
+                <button type="button" className="col-span-2 flex h-7 items-center gap-3 text-left text-sm" aria-pressed={pisOn} onClick={() => onPisOn(!pisOn)}>
+                  <KindMark on={pisOn} />
+                  PIS/Pasep
+                </button>
+              </div>
+            </div>
+          </FinanceFold>
+          <FinanceFold title="Despesas" open={despesas} onToggle={() => setDespesas((open) => !open)}>
+            <div id="fin-pagamentos" />
+            <div id="fin-boletos" />
+            <div className="flex flex-col gap-2">
+              <p className="text-sm font-medium text-fg">Veículos</p>
+              <div className="flex items-center gap-2">
+                <div className="cal-kind-pick is-uf">
+                  <HeaderMenu
+                    label="UF"
+                    value={ipvaUf}
+                    options={UF_OPTIONS}
+                    open={ipvaUfMenu}
+                    wide
+                    fixed
+                    soft
+                    buttonClassName="cal-kind-btn"
+                    optionClassName="cal-kind-option"
+                    onOpen={() => setIpvaUfMenu(true)}
+                    onClose={() => setIpvaUfMenu(false)}
+                    onPick={(next) => {
+                      onIpvaUf(next);
+                      setIpvaUfMenu(false);
+                    }}
+                  />
+                </div>
+                <input
+                  value={ipvaPlate}
+                  maxLength={8}
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  aria-label="Placa do veículo"
+                  placeholder="placa"
+                  className="h-11 min-w-0 flex-1 rounded-xl bg-bg px-3 text-sm uppercase text-fg shadow-[0_0_0_1px_var(--c-line)] outline-none placeholder:text-muted"
+                  onChange={(event) => onIpvaPlate(event.target.value)}
+                />
+              </div>
+              <div className="grid w-full grid-cols-[2.85rem_minmax(0,1fr)_7.25rem_1.65rem] items-center gap-x-2.5">
+                <button type="button" className="col-span-2 flex h-7 items-center gap-3 text-left text-sm" aria-pressed={ipvaOn} onClick={() => onIpvaOn(!ipvaOn)}>
+                  <KindMark on={ipvaOn} />
+                  IPVA
+                </button>
+                <button type="button" className="col-span-2 flex h-7 items-center gap-3 text-left text-sm" aria-pressed={licencaOn} onClick={() => onLicencaOn(!licencaOn)}>
+                  <KindMark on={licencaOn} />
+                  Licenciamento
+                </button>
+              </div>
+            </div>
+          </FinanceFold>
+        </>
       ) : null}
     </section>
   );

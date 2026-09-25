@@ -2,7 +2,7 @@ import { Pencil, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DatePick, TimePick } from "@/components/date-time-pick";
-import { MONTHS, formatTime, fromIso, weekdayName, type CalEvent } from "@/lib/calendar";
+import { MONTHS, formatTime, fromIso, weekdayName, type CalEvent, type HourCycle } from "@/lib/calendar";
 import { A11yHint } from "@/components/a11y-hint";
 import { ContactLine } from "@/components/contact-line";
 import { cn, withTip } from "@/lib/utils";
@@ -13,9 +13,10 @@ type HistoryTabProps = {
   onOpen: (event: CalEvent) => void;
   onRemove: (id: string) => void;
   onReschedule: (event: CalEvent) => void;
+  hourCycle?: HourCycle;
 };
 
-export function HistoryTab({ events, openId, onOpen, onRemove, onReschedule }: HistoryTabProps) {
+export function HistoryTab({ events, openId, onOpen, onRemove, onReschedule, hourCycle = "12" }: HistoryTabProps) {
   const rows = [...events].sort(
     (a, b) => b.iso.localeCompare(a.iso) || (b.time ?? "").localeCompare(a.time ?? ""),
   );
@@ -76,7 +77,7 @@ export function HistoryTab({ events, openId, onOpen, onRemove, onReschedule }: H
                     <span className="capitalize">
                       {MONTHS[day.getMonth()].slice(0, 3)} {year}
                     </span>
-                    {event.time ? <span>{formatTime(event.time)}</span> : null}
+                    {event.time ? <span>{formatTime(event.time, hourCycle)}</span> : null}
                   </span>
                 </button>
                 <div className={cn("cal-event-details", open && "is-open")}>
@@ -91,7 +92,7 @@ export function HistoryTab({ events, openId, onOpen, onRemove, onReschedule }: H
                       }}
                     >
                       <DatePick value={draftDate} onChange={setDraftDate} />
-                      <TimePick value={draftTime} onChange={setDraftTime} />
+                      <TimePick value={draftTime} cycle={hourCycle} onChange={setDraftTime} />
                       <Button type="submit" className="w-full">
                         Remarcar
                       </Button>

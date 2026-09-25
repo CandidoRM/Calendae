@@ -54,13 +54,99 @@ export function sanitizeBarcode(raw: string): string {
 }
 
 export function sanitizeAmount(raw: string): string {
-  let text = raw.replace(/[^\d,]/g, "");
-  const comma = text.indexOf(",");
+  let text = raw.replace(/[^\d.,]/g, "");
+  const comma = text.lastIndexOf(",");
   if (comma >= 0) {
-    text = `${text.slice(0, comma).replace(/,/g, "")},${text.slice(comma + 1).replace(/\D/g, "").slice(0, 2)}`;
+    const reais = text.slice(0, comma).replace(/[^\d.]/g, "");
+    const cents = text.slice(comma + 1).replace(/\D/g, "").slice(0, 2);
+    return `${reais},${cents}`;
   }
-  const [reais = "", cents] = text.split(",");
-  return cents !== undefined ? `${reais.slice(0, 11)},${cents}` : reais.slice(0, 11);
+  return text.replace(/[^\d.]/g, "");
+}
+
+const ONES = ["", "um", "dois", "três", "quatro", "cinco", "seis", "sete", "oito", "nove"];
+const TEENS = ["dez", "onze", "doze", "treze", "quatorze", "quinze", "dezesseis", "dezessete", "dezoito", "dezenove"];
+const TENS = ["", "", "vinte", "trinta", "quarenta", "cinquenta", "sessenta", "setenta", "oitenta", "noventa"];
+const HUNDREDS = ["", "cento", "duzentos", "trezentos", "quatrocentos", "quinhentos", "seiscentos", "setecentos", "oitocentos", "novecentos"];
+
+function below100(n: number): string {
+  if (n < 10) return ONES[n];
+  if (n < 20) return TEENS[n - 10];
+  const ten = Math.floor(n / 10);
+  const one = n % 10;
+  return one ? `${TENS[ten]} e ${ONES[one]}` : TENS[ten];
+}
+
+function below1000(n: number): string {
+  if (n === 100) return "cem";
+  const hundred = Math.floor(n / 100);
+  const rest = n % 100;
+  if (!hundred) return below100(rest);
+  if (!rest) return HUNDREDS[hundred];
+  return `${HUNDREDS[hundred]} e ${below100(rest)}`;
+}
+
+function integerWords(n: number): string {
+  if (n === 0) return "zero";
+  const classes: { text: string; n: number; big: boolean }[] = [];
+  const scales: [number, string, string][] = [
+    [1_000_000_000, "bilhão", "bilhões"],
+    [1_000_000, "milhão", "milhões"],
+    [1_000, "mil", "mil"],
+  ];
+  let left = n;
+  for (const [div, one, many] of scales) {
+    const count = Math.floor(left / div);
+    if (!count) continue;
+    left %= div;
+    const text =
+      div === 1_000
+        ? count === 1
+          ? "mil"
+          : `${below1000(count)} mil`
+        : count === 1
+          ? `um ${one}`
+          : `${below1000(count)} ${many}`;
+    classes.push({ text, n: count, big: div >= 1_000_000 });
+  }
+  if (left) classes.push({ text: below1000(left), n: left, big: false });
+  return classes
+    .map((part, index) => {
+      if (index === 0) return part.text;
+      const last = index === classes.length - 1;
+      const round = part.n < 100 || part.n % 100 === 0;
+      if (last && round) return ` e ${part.text}`;
+      if (classes[index - 1]?.big) return `, ${part.text}`;
+      return ` ${part.text}`;
+    })
+    .join("");
+}
+
+function parseReais(raw: string): { reais: number; cents: number } | null {
+  const text = raw.trim();
+  if (!text || !/^[\d.,]+$/.test(text)) return null;
+  const comma = text.lastIndexOf(",");
+  const reaisText = (comma >= 0 ? text.slice(0, comma) : text).replace(/\./g, "").replace(/\D/g, "");
+  const centsText = comma >= 0 ? text.slice(comma + 1).replace(/\D/g, "").padEnd(2, "0").slice(0, 2) : "00";
+  if (!reaisText && !centsText) return null;
+  const reais = Number(reaisText || "0");
+  const cents = Number(centsText || "0");
+  if (!Number.isFinite(reais) || !Number.isFinite(cents) || reais < 0 || cents < 0 || reais > 999_999_999_999) return null;
+  return { reais, cents };
+}
+
+/** "100,05" → "cem reais e cinco centavos". */
+export function amountInWords(raw: string): string {
+  const parsed = parseReais(raw);
+  if (!parsed) return raw;
+  const { reais, cents } = parsed;
+  const reaisText =
+    reais === 0
+      ? ""
+      : `${integerWords(reais)}${reais % 1_000_000 === 0 && reais >= 1_000_000 ? " de" : ""} ${reais === 1 ? "real" : "reais"}`;
+  const centsText = cents === 0 ? "" : `${integerWords(cents)} ${cents === 1 ? "centavo" : "centavos"}`;
+  if (reaisText && centsText) return `${reaisText} e ${centsText}`;
+  return reaisText || centsText || "zero reais";
 }
 
 export function sanitizeBank(raw: string): string {

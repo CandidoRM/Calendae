@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { CalendarGlyph, useGlyphFlash } from "@/components/calendar-glyph";
 import { HeaderMenu } from "@/components/header-menu";
+import { FormSlot } from "@/components/form-slot";
 import { A11yHint } from "@/components/a11y-hint";
 import { MONTHS, fromIso, newEventId, type CalEvent } from "@/lib/calendar";
 import { thirteenthMonths } from "@/lib/almanac";
@@ -74,6 +75,7 @@ type BenefitsTabProps = {
   onOpen: (event: CalEvent, iso: string) => void;
   framed?: boolean;
   adding?: boolean;
+  formSlot?: string | null;
 };
 
 export function BenefitsTab({
@@ -88,6 +90,7 @@ export function BenefitsTab({
   onOpen,
   framed = true,
   adding: addingProp,
+  formSlot = null,
 }: BenefitsTabProps) {
   const [glyphFlash, pingGlyph] = useGlyphFlash();
   const [addingSelf, setAddingSelf] = useState(false);
@@ -287,9 +290,11 @@ export function BenefitsTab({
       </div>
       ) : null}
       {framed ? <A11yHint>Dia em que o benefício do INSS cai na conta.</A11yHint> : null}
+      <FormSlot id={formSlot}>
       {adding ? (
         <div className="mt-3 flex flex-col gap-2 border-t border-line pt-3">{formFields}</div>
       ) : null}
+      </FormSlot>
       {visible.length === 0 ? null : (
         <ul className="cal-ruled mt-1">
           {visible.map(({ event, iso, digit, tag }) => {

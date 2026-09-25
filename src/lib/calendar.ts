@@ -1,7 +1,8 @@
 export type EventKind = "semanal" | "mensal" | "semestral" | "anual" | "personalizado" | "posicao";
 export type EventSource = "local" | "holiday" | "google" | "birthday" | "benefit" | "bill" | "boleto" | "period" | "irpf" | "pis" | "ipva" | "fgts" | "bolsa" | "gas" | "licenca";
-export type HolidayKind = "national" | "municipal" | "commemorative" | "election" | "facultative";
+export type HolidayKind = "national" | "municipal" | "commemorative" | "election" | "facultative" | "enem" | "season";
 export type MonthSide = "primeiros" | "ultimos";
+export type IntervalRule = "ignorar" | "preceder" | "proceder" | "adiar" | "cancelar";
 
 export type CalEvent = {
   id: string;
@@ -15,6 +16,7 @@ export type CalEvent = {
   monthSide?: MonthSide;
   monthNth?: number;
   monthUtil?: boolean;
+  intervalRule?: IntervalRule;
   durationDays?: number;
   durationMinutes?: number;
   source: EventSource;
@@ -26,6 +28,7 @@ export type CalEvent = {
   thirteenth?: boolean;
   confirmed?: boolean;
   amount?: string;
+  fileName?: string;
 };
 
 export type CalCell = {
@@ -40,6 +43,7 @@ export type WeekStart = "monday" | "sunday";
 
 export type CalTabId =
   | "holidays"
+  | "destaques"
   | "agenda"
   | "birthdays"
   | "finance"
@@ -47,6 +51,7 @@ export type CalTabId =
 
 export const CAL_TABS: { id: CalTabId; label: string }[] = [
   { id: "holidays", label: "Feriados" },
+  { id: "destaques", label: "Destaques" },
   { id: "agenda", label: "Agenda" },
   { id: "birthdays", label: "Aniversários" },
   { id: "finance", label: "Finanças" },
@@ -55,6 +60,7 @@ export const CAL_TABS: { id: CalTabId; label: string }[] = [
 
 export const DEFAULT_TABS: Record<CalTabId, boolean> = {
   holidays: true,
+  destaques: true,
   agenda: true,
   birthdays: true,
   finance: true,
@@ -68,6 +74,10 @@ export type Settings = {
   municipal: boolean;
   commemorative: boolean;
   elections: boolean;
+  enem: boolean;
+  irpfOn: boolean;
+  seasons: boolean;
+  hourCycle: HourCycle;
   electionSecondRound: boolean;
   electionSecondTriedYear: number | null;
   facultative: boolean;
@@ -110,6 +120,10 @@ export const DEFAULT_SETTINGS: Settings = {
   municipal: false,
   commemorative: false,
   elections: true,
+  enem: false,
+  irpfOn: true,
+  seasons: true,
+  hourCycle: "12",
   electionSecondRound: false,
   electionSecondTriedYear: null,
   facultative: true,
@@ -284,15 +298,18 @@ export function weekdayName(iso: string): string {
   return WEEKDAYS[fromIso(iso).getDay()];
 }
 
-export function formatTime(time?: string): string {
+export type HourCycle = "12" | "24";
+
+export function formatTime(time?: string, cycle: HourCycle = "12"): string {
   if (!time) return "";
   const [hourPart, minutePart] = time.split(":");
   const hours = Number(hourPart);
   const minutes = Number(minutePart);
   if (!Number.isFinite(hours)) return time;
+  const mins = Number.isFinite(minutes) ? String(minutes).padStart(2, "0") : "00";
+  if (cycle === "24") return `${String(Math.min(23, Math.max(0, hours))).padStart(2, "0")}:${mins}`;
   const suffix = hours >= 12 ? "pm" : "am";
   const hour12 = hours % 12 === 0 ? 12 : hours % 12;
-  const mins = Number.isFinite(minutes) ? String(minutes).padStart(2, "0") : "00";
   return `${hour12}:${mins} ${suffix}`;
 }
 
@@ -521,6 +538,89 @@ export function intervalFollow(
   return { rest, hop: hop && hop > cursor ? hop : null };
 }
 
+function advanceKind(event: CalEvent, iso: string, steps: number): string {
+  let cursor = iso;
+  for (let i = 0; i < steps; i += 1) {
+    const next = postponeIso(event, cursor);
+    if (!next || next <= cursor) return cursor;
+    cursor = next;
+  }
+  return cursor;
+}
+
+function freeNear(iso: string, step: number, blocked: ReadonlySet<string>): string {
+  let cursor = iso;
+  for (let i = 0; i < 21; i += 1) {
+    const date = fromIso(cursor);
+    date.setDate(date.getDate() + step);
+    cursor = toIso(date);
+    if (!blocked.has(cursor)) return cursor;
+  }
+  return cursor;
+}
+
+/** Datas do intervalo depois da regra de feriado. Ignorar devolve vazio: a série normal fica. */
+export function resolvedMarks(event: CalEvent, blocked: ReadonlySet<string>, until: string): string[] {
+  const rule = event.intervalRule ?? "ignorar";
+  if (!event.kind || rule === "ignorar") return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  let cursor: string | null = event.iso;
+  let delay = 0;
+  for (let guard = 0; guard < 8000 && cursor; guard += 1) {
+    let placed = delay > 0 ? advanceKind(event, cursor, delay) : cursor;
+    if (blocked.has(placed)) {
+      if (rule === "adiar") {
+        delay += 1;
+        placed = advanceKind(event, cursor, delay);
+        let extra = 0;
+        while (blocked.has(placed) && extra < 30) {
+          delay += 1;
+          extra += 1;
+          placed = advanceKind(event, cursor, delay);
+        }
+        if (!blocked.has(placed)) push(placed);
+      } else if (rule === "preceder") {
+        push(freeNear(placed, -1, blocked));
+      } else if (rule === "proceder") {
+        push(freeNear(placed, 1, blocked));
+      }
+    } else {
+      push(placed);
+    }
+    if (cursor > until) break;
+    const next = postponeIso(event, cursor);
+    if (!next || next <= cursor) break;
+    cursor = next;
+  }
+  return out;
+
+  function push(iso: string) {
+    if (seen.has(iso)) return;
+    seen.add(iso);
+    out.push(iso);
+  }
+}
+
+export function followResolved(
+  event: CalEvent,
+  blocked: ReadonlySet<string>,
+  anchor: string,
+  year: number,
+  month: number,
+): { rest: string[]; hop: string | null } {
+  if (!event.kind || !event.intervalRule || event.intervalRule === "ignorar") {
+    return intervalFollow(event, anchor, year, month);
+  }
+  const monthEnd = toIso(civilDate(year, month + 1, 0));
+  const horizon = toIso(civilDate(year, month + 2, 21));
+  const later = resolvedMarks(event, blocked, horizon).filter((iso) => iso > anchor);
+  return {
+    rest: later.filter((iso) => iso <= monthEnd),
+    hop: later.find((iso) => iso > monthEnd) ?? null,
+  };
+}
+
 export function eventMatchesIso(event: CalEvent, iso: string): boolean {
   if (event.source === "benefit") {
     return event.iso === iso;
@@ -608,7 +708,7 @@ export function isFacultative(event: CalEvent): boolean {
 
 export function isNational(event: CalEvent): boolean {
   if (event.source !== "holiday") return false;
-  if (isFacultative(event) || isCommemorative(event) || isElection(event)) return false;
+  if (isFacultative(event) || isCommemorative(event) || isElection(event) || event.holidayKind === "enem" || event.holidayKind === "season") return false;
   if (event.holidayKind === "municipal") return false;
   return event.holidayKind === "national" || event.holidayKind === undefined;
 }
@@ -617,9 +717,13 @@ export function isElection(event: CalEvent): boolean {
   return event.source === "holiday" && event.holidayKind === "election";
 }
 
+export function isEnem(event: CalEvent): boolean {
+  return event.source === "holiday" && event.holidayKind === "enem";
+}
+
 export function officeHolidayLabel(event: CalEvent): "Feriado Nacional" | "Feriado Municipal" | null {
   if (event.source !== "holiday") return null;
-  if (isFacultative(event) || isCommemorative(event) || isElection(event)) return null;
+  if (isFacultative(event) || isCommemorative(event) || isElection(event) || event.holidayKind === "enem" || event.holidayKind === "season") return null;
   if (event.holidayKind === "municipal") return "Feriado Municipal";
   if (event.holidayKind === "national" || event.holidayKind === undefined) return "Feriado Nacional";
   return null;
@@ -749,10 +853,13 @@ export function archiveEvent(event: CalEvent): CalEvent {
 }
 
 export function eventTab(event: CalEvent): CalTabId | null {
-  if (event.source === "holiday") return "holidays";
+  if (event.source === "holiday") {
+    if (event.holidayKind === "election" || event.holidayKind === "enem" || event.holidayKind === "season") return "destaques";
+    return "holidays";
+  }
   if (event.source === "birthday") return "birthdays";
   if (event.source === "benefit" || event.source === "bill" || event.source === "boleto" || event.source === "irpf" || event.source === "pis" || event.source === "ipva" || event.source === "fgts" || event.source === "bolsa" || event.source === "gas" || event.source === "licenca") return "finance";
-  if (event.source === "local" || event.source === "google" || event.source === "period") return "agenda";
+  if (event.source === "local" || event.source === "google") return "agenda";
   return null;
 }
 
@@ -769,7 +876,7 @@ export function mergeEventsById(base: CalEvent[], extra: CalEvent[]): CalEvent[]
 }
 
 export type CellSquare = "today" | "election" | "holiday" | "overdue" | "none";
-export type CellNum = "pay" | "bill" | "ir" | "holiday" | "commemorative" | "election" | "today" | "white" | "fg";
+export type CellNum = "pay" | "bill" | "ir" | "holiday" | "commemorative" | "election" | "enem" | "season" | "today" | "white" | "fg";
 
 export function cellLook(
   cell: CalCell,
@@ -784,6 +891,8 @@ export function cellLook(
   const commemorative = holidayTint && cell.events.some(isCommemorative);
   const facultative = holidayTint && cell.events.some(isFacultative);
   const election = holidayTint && cell.events.some(isElection);
+  const enem = cell.events.some(isEnem);
+  const season = cell.events.some((event) => event.holidayKind === "season");
   const payment = cell.events.some(isPayment);
   const bill = cell.events.some(isBill) || cell.events.some(isBoleto) || cell.events.some(isIpva) || cell.events.some(isLicenca);
   const overdue = Boolean(today) && bill && cell.iso < today;
@@ -799,6 +908,8 @@ export function cellLook(
   let num: CellNum = "fg";
   if (payment) num = "pay";
   else if (bill) num = "bill";
+  else if (enem) num = "enem";
+  else if (season) num = "season";
   else if (off) num = "holiday";
   else if (commemorative) num = "commemorative";
   else if (facultative) num = "holiday";

@@ -1,9 +1,12 @@
-import { Pencil, Trash2 } from "lucide-react";
+import { Paperclip, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { BarcodeScanButton } from "@/components/barcode-scan";
+import { FormSlot } from "@/components/form-slot";
 import { DatePick } from "@/components/date-time-pick";
 import { useGlyphFlash } from "@/components/calendar-glyph";
+import { deleteBoletoFile, putBoletoFile } from "@/lib/boleto-file";
 import {
+  amountInWords,
   boletoHasData,
   parseBoleto,
   sanitizeAmount,
@@ -25,6 +28,7 @@ type BoletosBlockProps = {
   onRemove: (id: string) => void;
   onUpdate: (event: CalEvent) => void;
   onOpen: (event: CalEvent, iso: string) => void;
+  formSlot?: string | null;
 };
 
 export function BoletosBlock({
@@ -39,12 +43,16 @@ export function BoletosBlock({
   onRemove,
   onUpdate,
   onOpen,
+  formSlot = null,
 }: BoletosBlockProps) {
   const [, pingGlyph] = useGlyphFlash();
   const [code, setCode] = useState("");
   const [due, setDue] = useState(selectedIso);
   const [amount, setAmount] = useState("");
   const [bank, setBank] = useState("");
+  const [fileName, setFileName] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+  const fileFor = useRef<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editCode, setEditCode] = useState("");
   const [editDue, setEditDue] = useState(selectedIso);
@@ -85,14 +93,16 @@ export function BoletosBlock({
     nextDue: string,
     nextAmount: string,
     nextBank: string,
+    nextFile = fileName,
   ) {
     const digits = sanitizeBarcode(nextCode);
-    if (!boletoHasData(digits, nextAmount, nextBank, nextDue, selectedIso)) {
+    if (!boletoHasData(digits, nextAmount, nextBank, nextDue, selectedIso) && !nextFile) {
       if (draftId.current) {
+        void deleteBoletoFile(draftId.current);
         onRemove(draftId.current);
         draftId.current = null;
       }
-      return;
+      return null;
     }
     const parsed = parseBoleto(digits);
     const iso = nextDue || parsed.iso || selectedIso;
@@ -105,13 +115,29 @@ export function BoletosBlock({
       nb: digits || undefined,
       place: nextBank.trim() || undefined,
       amount: nextAmount.trim() || undefined,
+      fileName: nextFile || undefined,
     };
     if (draftId.current) {
       onUpdate(body);
-      return;
+      return body.id;
     }
     draftId.current = body.id;
     onAdd(body);
+    return body.id;
+  }
+
+  function keepFile(file: File, id: string | null) {
+    if (file.size > 12 * 1024 * 1024) return;
+    if (!id || id === "draft") {
+      const saved = persist(code, due, amount, bank, file.name);
+      if (!saved) return;
+      setFileName(file.name);
+      void putBoletoFile(saved, file);
+      return;
+    }
+    const current = boletos.find((event) => event.id === id);
+    if (current) onUpdate({ ...current, fileName: file.name });
+    void putBoletoFile(id, file);
   }
 
   function fillCode(digits: string) {
@@ -136,6 +162,7 @@ export function BoletosBlock({
 
   return (
     <>
+      <FormSlot id={formSlot}>
       {adding ? (
         <div className="mt-3 flex flex-col gap-2 border-t border-line pt-3">
           <p className="text-sm font-medium text-fg">Boletos</p>
@@ -153,20 +180,45 @@ export function BoletosBlock({
             />
             <BarcodeScanButton onRead={fillCode} />
           </div>
-          <input
-            value={bank}
-            autoCorrect="off"
-            spellCheck={false}
-            maxLength={40}
-            aria-label="Banco"
-            placeholder="Banco"
-            className="h-11 rounded-xl bg-bg px-3 text-sm text-fg shadow-[0_0_0_1px_var(--c-line)] outline-none placeholder:text-muted"
-            onChange={(event) => {
-              const next = sanitizeBank(event.target.value);
-              setBank(next);
-              persist(code, due, amount, next);
-            }}
-          />
+          <div className="flex items-center">
+            <input
+              value={bank}
+              autoCorrect="off"
+              spellCheck={false}
+              maxLength={40}
+              aria-label="Banco"
+              placeholder="Banco"
+              className="h-11 min-w-0 flex-1 rounded-xl bg-bg px-3 text-sm text-fg shadow-[0_0_0_1px_var(--c-line)] outline-none placeholder:text-muted"
+              onChange={(event) => {
+                const next = sanitizeBank(event.target.value);
+                setBank(next);
+                persist(code, due, amount, next);
+              }}
+            />
+            <button
+              type="button"
+              aria-label="Anexar"
+              {...withTip("Anexar", "flex size-8 shrink-0 items-center justify-center text-fg")}
+              onClick={() => {
+                fileFor.current = "draft";
+                fileRef.current?.click();
+              }}
+            >
+              <Paperclip className="size-4" />
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*,application/pdf,.pdf"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                if (file) keepFile(file, fileFor.current);
+              }}
+            />
+          </div>
+          {fileName ? <p className="truncate text-xs text-muted">{fileName}</p> : null}
           <input
             value={amount}
             inputMode="decimal"
@@ -185,6 +237,7 @@ export function BoletosBlock({
           <DatePick value={due} onChange={(iso) => { setDue(iso); persist(code, iso, amount, bank); }} />
         </div>
       ) : null}
+      </FormSlot>
       {visible.map((event) => {
         const open = openId === event.id;
         const editing = editingId === event.id;
@@ -275,17 +328,30 @@ export function BoletosBlock({
                         }}
                       />
                     </div>
-                    <input
-                      value={editBank}
-                      maxLength={40}
-                      placeholder="Banco"
-                      className="h-11 rounded-xl bg-bg px-3 text-sm text-fg shadow-[0_0_0_1px_var(--c-line)] outline-none placeholder:text-muted"
-                      onChange={(change) => {
-                        const next = sanitizeBank(change.target.value);
-                        setEditBank(next);
-                        onUpdate({ ...event, title: next || "Boleto", place: next || undefined });
-                      }}
-                    />
+                    <div className="flex items-center">
+                      <input
+                        value={editBank}
+                        maxLength={40}
+                        placeholder="Banco"
+                        className="h-11 min-w-0 flex-1 rounded-xl bg-bg px-3 text-sm text-fg shadow-[0_0_0_1px_var(--c-line)] outline-none placeholder:text-muted"
+                        onChange={(change) => {
+                          const next = sanitizeBank(change.target.value);
+                          setEditBank(next);
+                          onUpdate({ ...event, title: next || "Boleto", place: next || undefined });
+                        }}
+                      />
+                      <button
+                        type="button"
+                        aria-label="Anexar"
+                        {...withTip("Anexar", "flex size-8 shrink-0 items-center justify-center text-fg")}
+                        onClick={() => {
+                          fileFor.current = event.id;
+                          fileRef.current?.click();
+                        }}
+                      >
+                        <Paperclip className="size-4" />
+                      </button>
+                    </div>
                     <input
                       value={editAmount}
                       inputMode="decimal"
@@ -309,9 +375,9 @@ export function BoletosBlock({
                 ) : (
                   <p className="grid grid-cols-[2.85rem_minmax(0,1fr)_7.25rem_1.65rem] items-baseline gap-x-2.5 pb-3 text-xs text-muted">
                     <span />
-                    <span className="col-span-2 break-all">
-                      {event.amount ? `R$ ${event.amount}` : "Boleto"}
-                      {event.nb ? ` · ${event.nb}` : ""}
+                    <span className="col-span-2">
+                      {event.amount ? amountInWords(event.amount) : "Boleto"}
+                      {event.nb ? <span className="break-all">{` · ${event.nb}`}</span> : null}
                     </span>
                   </p>
                 )}
@@ -334,7 +400,10 @@ export function BoletosBlock({
                     type="button"
                     aria-label={`Apagar ${event.title}`}
                     {...withTip("Apagar", "flex size-8 items-center justify-center text-muted")}
-                    onClick={() => onRemove(event.id)}
+                    onClick={() => {
+                      void deleteBoletoFile(event.id);
+                      onRemove(event.id);
+                    }}
                   >
                     <Trash2 className="size-4" />
                   </button>

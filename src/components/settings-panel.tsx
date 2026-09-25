@@ -11,6 +11,7 @@ import {
   type CalTabId,
   type HolidayYearCache,
   type WeekStart,
+  type HourCycle,
 } from "@/lib/calendar";
 import { cn, withTip } from "@/lib/utils";
 
@@ -64,10 +65,12 @@ type SettingsPanelProps = {
   saturdayTint: boolean;
   sundayTint: boolean;
   holidayTint: boolean;
+  hourCycle: HourCycle;
   onWeekStart: (next: WeekStart) => void;
   onSaturdayTint: (next: boolean) => void;
   onSundayTint: (next: boolean) => void;
   onHolidayTint: (next: boolean) => void;
+  onHourCycle: (next: HourCycle) => void;
   tabs: Record<CalTabId, boolean>;
   onToggleTab: (id: CalTabId, next: boolean) => void;
   a11yNumbers: boolean;
@@ -95,10 +98,12 @@ export function SettingsPanel({
   saturdayTint,
   sundayTint,
   holidayTint,
+  hourCycle,
   onWeekStart,
   onSaturdayTint,
   onSundayTint,
   onHolidayTint,
+  onHourCycle,
   tabs,
   onToggleTab,
   a11yNumbers,
@@ -118,6 +123,7 @@ export function SettingsPanel({
 }: SettingsPanelProps) {
   const [tab, setTab] = useState<SettingsTab>("geral");
   const [weekMenu, setWeekMenu] = useState(false);
+  const [hourMenu, setHourMenu] = useState(false);
 
   return (
     <div className="fixed inset-0 z-40 flex flex-col bg-bg/96 px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] text-fg backdrop-blur-sm">
@@ -159,7 +165,7 @@ export function SettingsPanel({
         <div
           className={cn(
             "flex min-h-0 flex-1 flex-col gap-3 pb-4",
-            weekMenu ? "overflow-visible" : "overflow-y-auto",
+            weekMenu || hourMenu ? "overflow-visible" : "overflow-y-auto",
           )}
         >
           {tab === "geral" ? (
@@ -198,7 +204,7 @@ export function SettingsPanel({
                       {item.id === "holidays"
                         ? "Feriados e eleições saem da lista e da grade."
                         : item.id === "agenda"
-                          ? "Compromissos e períodos saem da lista e da grade. Avisos também param."
+                          ? "Compromissos saem da lista e da grade. Avisos também param."
                           : item.id === "birthdays"
                               ? "Aniversários saem da lista e da grade."
                               : item.id === "finance"
@@ -244,6 +250,32 @@ export function SettingsPanel({
           {tab === "calendario" ? (
             <>
               <Aba
+                title="Formato de horas"
+                hint="12h com am/pm, ou 24h. Vale no campo e na lista."
+                bodyClassName="relative pb-1 pt-1.5"
+              >
+                <HeaderMenu
+                  label="Formato de horas"
+                  value={hourCycle}
+                  options={[
+                    { value: "12", label: "12h" },
+                    { value: "24", label: "24h" },
+                  ]}
+                  open={hourMenu}
+                  buttonClassName="cal-week-btn"
+                  optionClassName="cal-week-option"
+                  onOpen={() => {
+                    setWeekMenu(false);
+                    setHourMenu(true);
+                  }}
+                  onClose={() => setHourMenu(false)}
+                  onPick={(next) => {
+                    onHourCycle(next);
+                    setHourMenu(false);
+                  }}
+                />
+              </Aba>
+              <Aba
                 title="Início da Semana"
                 hint="Escolha se a primeira coluna da grade é domingo ou segunda."
                 bodyClassName="relative pb-1 pt-1.5"
@@ -259,7 +291,10 @@ export function SettingsPanel({
                   wide
                   buttonClassName="cal-week-btn"
                   optionClassName="cal-week-option"
-                  onOpen={() => setWeekMenu(true)}
+                  onOpen={() => {
+                    setHourMenu(false);
+                    setWeekMenu(true);
+                  }}
                   onClose={() => setWeekMenu(false)}
                   onPick={(next) => {
                     onWeekStart(next);

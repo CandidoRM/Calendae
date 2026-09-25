@@ -1,7 +1,7 @@
 import { Calendar, ChevronLeft, ChevronRight, Clock } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { MONTHS, civilDate, fromIso, toIso, weekLabels, YEAR_MAX, YEAR_MIN } from "@/lib/calendar";
+import { MONTHS, civilDate, fromIso, toIso, weekLabels, YEAR_MAX, YEAR_MIN, type HourCycle } from "@/lib/calendar";
 import { cn, withTip } from "@/lib/utils";
 
 function pad(n: number): string {
@@ -33,6 +33,23 @@ function join12(hour: string, minute: string, ap: "am" | "pm"): string | null {
   if (hours < 1 || hours > 12) return null;
   if (ap === "am") hours = hours === 12 ? 0 : hours;
   else hours = hours === 12 ? 12 : hours + 12;
+  return `${pad(hours)}:${pad(mins)}`;
+}
+
+function split24(time: string): { hour: string; minute: string } {
+  const [hRaw, mRaw] = time.split(":");
+  const hours = Number(hRaw);
+  const minutes = Number(mRaw ?? 0);
+  const h = Number.isFinite(hours) ? Math.min(23, Math.max(0, hours)) : 0;
+  const m = Number.isFinite(minutes) ? Math.min(59, Math.max(0, minutes)) : 0;
+  return { hour: pad(h), minute: pad(m) };
+}
+
+function join24(hour: string, minute: string): string | null {
+  if (hour.length < 2 || minute.length < 2) return null;
+  const hours = Number(hour);
+  const mins = Number(minute);
+  if (!Number.isFinite(hours) || !Number.isFinite(mins) || hours > 23 || mins > 59) return null;
   return `${pad(hours)}:${pad(mins)}`;
 }
 
@@ -154,8 +171,17 @@ function DateCal({
   );
 }
 
-function TimeCal({ value, onPick }: { value: string; onPick: (time: string) => void }) {
-  const parts = split12(value);
+function TimeCal({
+  value,
+  cycle,
+  onPick,
+}: {
+  value: string;
+  cycle: HourCycle;
+  onPick: (time: string) => void;
+}) {
+  const parts12 = split12(value);
+  const parts24 = split24(value);
   const hourRef = useRef<HTMLButtonElement>(null);
   const minuteRef = useRef<HTMLButtonElement>(null);
   const apRef = useRef<HTMLButtonElement>(null);
@@ -166,6 +192,48 @@ function TimeCal({ value, onPick }: { value: string; onPick: (time: string) => v
       col.scrollTop = el.offsetTop - col.clientHeight / 2 + el.offsetHeight / 2;
     }
   }, []);
+
+  if (cycle === "24") {
+    return (
+      <div className="cal-dt-clock">
+        <div className="cal-dt-col">
+          {Array.from({ length: 24 }, (_, i) => {
+            const h = pad(i);
+            return (
+              <button
+                key={h}
+                type="button"
+                ref={h === parts24.hour ? hourRef : undefined}
+                className={cn("cal-dt-tick", h === parts24.hour && "is-on")}
+                onClick={() => {
+                  const joined = join24(h, parts24.minute);
+                  if (joined) onPick(joined);
+                }}
+              >
+                {h}
+              </button>
+            );
+          })}
+        </div>
+        <div className="cal-dt-col">
+          {Array.from({ length: 60 }, (_, m) => (
+            <button
+              key={m}
+              type="button"
+              ref={pad(m) === parts24.minute ? minuteRef : undefined}
+              className={cn("cal-dt-tick", pad(m) === parts24.minute && "is-on")}
+              onClick={() => {
+                const joined = join24(parts24.hour, pad(m));
+                if (joined) onPick(joined);
+              }}
+            >
+              {pad(m)}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   function pick(hour: string, minute: string, ap: "am" | "pm") {
     const joined = join12(hour, minute, ap);
@@ -181,9 +249,9 @@ function TimeCal({ value, onPick }: { value: string; onPick: (time: string) => v
             <button
               key={h}
               type="button"
-              ref={h === parts.hour ? hourRef : undefined}
-              className={cn("cal-dt-tick", h === parts.hour && "is-on")}
-              onClick={() => pick(h, parts.minute, parts.ap)}
+              ref={h === parts12.hour ? hourRef : undefined}
+              className={cn("cal-dt-tick", h === parts12.hour && "is-on")}
+              onClick={() => pick(h, parts12.minute, parts12.ap)}
             >
               {h}
             </button>
@@ -195,9 +263,9 @@ function TimeCal({ value, onPick }: { value: string; onPick: (time: string) => v
           <button
             key={m}
             type="button"
-            ref={pad(m) === parts.minute ? minuteRef : undefined}
-            className={cn("cal-dt-tick", pad(m) === parts.minute && "is-on")}
-            onClick={() => pick(parts.hour, pad(m), parts.ap)}
+            ref={pad(m) === parts12.minute ? minuteRef : undefined}
+            className={cn("cal-dt-tick", pad(m) === parts12.minute && "is-on")}
+            onClick={() => pick(parts12.hour, pad(m), parts12.ap)}
           >
             {pad(m)}
           </button>
@@ -208,9 +276,9 @@ function TimeCal({ value, onPick }: { value: string; onPick: (time: string) => v
           <button
             key={mer}
             type="button"
-            ref={mer === parts.ap ? apRef : undefined}
-            className={cn("cal-dt-tick", mer === parts.ap && "is-on")}
-            onClick={() => pick(parts.hour, parts.minute, mer)}
+            ref={mer === parts12.ap ? apRef : undefined}
+            className={cn("cal-dt-tick", mer === parts12.ap && "is-on")}
+            onClick={() => pick(parts12.hour, parts12.minute, mer)}
           >
             {mer}
           </button>
@@ -220,7 +288,7 @@ function TimeCal({ value, onPick }: { value: string; onPick: (time: string) => v
   );
 }
 
-type SegKind = "day" | "month" | "year" | "hour" | "minute";
+type SegKind = "day" | "month" | "year" | "hour" | "hour24" | "minute";
 
 function earlyPad(kind: SegKind, digit: string): string | null {
   const n = Number(digit);
@@ -228,6 +296,7 @@ function earlyPad(kind: SegKind, digit: string): string | null {
   if (kind === "day" && n >= 4) return pad(n);
   if (kind === "month" && n >= 2) return pad(n);
   if (kind === "hour" && n >= 2) return pad(n);
+  if (kind === "hour24" && n >= 3) return pad(n);
   if (kind === "minute" && n >= 6) return pad(n);
   return null;
 }
@@ -237,6 +306,7 @@ function clampSeg(kind: SegKind, raw: string): string {
   if (kind === "day") return pad(Math.min(31, Math.max(1, n || 1)));
   if (kind === "month") return pad(Math.min(12, Math.max(1, n || 1)));
   if (kind === "hour") return pad(Math.min(12, Math.max(1, n || 1)));
+  if (kind === "hour24") return pad(Math.min(23, Math.max(0, Number.isFinite(n) ? n : 0)));
   if (kind === "minute") return pad(Math.min(59, Math.max(0, Number.isFinite(n) ? n : 0)));
   return raw.replace(/\D/g, "").slice(0, 4).padStart(4, "0");
 }
@@ -518,27 +588,35 @@ export function DatePick({
   );
 }
 
-export function TimePick({ value, onChange }: { value: string; onChange: (next: string) => void }) {
+export function TimePick({
+  value,
+  cycle = "12",
+  onChange,
+}: {
+  value: string;
+  cycle?: HourCycle;
+  onChange: (next: string) => void;
+}) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const hourRef = useRef<HTMLInputElement>(null);
   const minuteRef = useRef<HTMLInputElement>(null);
   const apRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
-  const parts = split12(value);
+  const parts = cycle === "24" ? { ...split24(value), ap: "am" as const } : split12(value);
   const [hour, setHour] = useState(parts.hour);
   const [minute, setMinute] = useState(parts.minute);
   const [ap, setAp] = useState<"am" | "pm">(parts.ap);
 
   useEffect(() => {
     if (wrapRef.current?.contains(document.activeElement)) return;
-    const next = split12(value);
+    const next = cycle === "24" ? { ...split24(value), ap: "am" as const } : split12(value);
     setHour(next.hour);
     setMinute(next.minute);
     setAp(next.ap);
-  }, [value]);
+  }, [value, cycle]);
 
   function emit(h: string, m: string, mer: "am" | "pm") {
-    const joined = join12(h, m, mer);
+    const joined = cycle === "24" ? join24(h, m) : join12(h, m, mer);
     if (joined) onChange(joined);
   }
 
@@ -549,7 +627,7 @@ export function TimePick({ value, onChange }: { value: string; onChange: (next: 
         <Seg
           value={hour}
           max={2}
-          kind="hour"
+          kind={cycle === "24" ? "hour24" : "hour"}
           label="Hora"
           inputRef={hourRef}
           onChange={(next) => {
@@ -572,44 +650,46 @@ export function TimePick({ value, onChange }: { value: string; onChange: (next: 
             setMinute(next);
             emit(hour, next, ap);
           }}
-          onFull={() => apRef.current?.focus()}
+          onFull={() => (cycle === "24" ? undefined : apRef.current?.focus())}
           onBack={() => hourRef.current?.focus()}
         />
-        <button
-          ref={apRef}
-          type="button"
-          className="cal-ap"
-          aria-label="AM ou PM"
-          onClick={() => {
-            const next = ap === "am" ? "pm" : "am";
-            setAp(next);
-            emit(hour, minute, next);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "ArrowLeft") {
-              event.preventDefault();
-              selectAll(minuteRef.current);
-            }
-            if (event.key === "a" || event.key === "A") {
-              event.preventDefault();
-              setAp("am");
-              emit(hour, minute, "am");
-            }
-            if (event.key === "p" || event.key === "P") {
-              event.preventDefault();
-              setAp("pm");
-              emit(hour, minute, "pm");
-            }
-            if (event.key === " " || event.key === "Enter" || event.key === "ArrowUp" || event.key === "ArrowDown") {
-              event.preventDefault();
+        {cycle === "12" ? (
+          <button
+            ref={apRef}
+            type="button"
+            className="cal-ap"
+            aria-label="AM ou PM"
+            onClick={() => {
               const next = ap === "am" ? "pm" : "am";
               setAp(next);
               emit(hour, minute, next);
-            }
-          }}
-        >
-          {ap}
-        </button>
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowLeft") {
+                event.preventDefault();
+                selectAll(minuteRef.current);
+              }
+              if (event.key === "a" || event.key === "A") {
+                event.preventDefault();
+                setAp("am");
+                emit(hour, minute, "am");
+              }
+              if (event.key === "p" || event.key === "P") {
+                event.preventDefault();
+                setAp("pm");
+                emit(hour, minute, "pm");
+              }
+              if (event.key === " " || event.key === "Enter" || event.key === "ArrowUp" || event.key === "ArrowDown") {
+                event.preventDefault();
+                const next = ap === "am" ? "pm" : "am";
+                setAp(next);
+                emit(hour, minute, next);
+              }
+            }}
+          >
+            {ap}
+          </button>
+        ) : null}
       </div>
       <button type="button" {...withTip("Horário", "cal-time-icon")} aria-label="Escolher horário" onClick={() => setOpen((v) => !v)}>
         <Clock className="size-4" />
@@ -618,6 +698,7 @@ export function TimePick({ value, onChange }: { value: string; onChange: (next: 
         <PickerPop anchor={wrapRef.current} onClose={() => setOpen(false)}>
           <TimeCal
             value={value}
+            cycle={cycle}
             onPick={(time) => {
               onChange(time);
             }}

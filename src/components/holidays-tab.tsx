@@ -29,6 +29,8 @@ function holidayKindLabel(event: CalEvent): string | null {
   if (event.holidayKind === "commemorative") return "(comemorativo)";
   if (event.holidayKind === "facultative" || facultativeName(event.title)) return "(facultativo)";
   if (event.holidayKind === "election") return `(${event.title})`;
+  if (event.holidayKind === "enem") return `(${event.title})`;
+  if (event.holidayKind === "season") return "(estação)";
   return null;
 }
 
@@ -41,6 +43,8 @@ function holidayTypeName(event: CalEvent): string {
     return facultativeAka(event.title) ?? "Ponto facultativo";
   }
   if (event.holidayKind === "election") return "Eleitoral";
+  if (event.holidayKind === "enem") return event.confirmed ? "Confirmado" : "Previsto";
+  if (event.holidayKind === "season") return event.place || "Estação";
   return nationalAka(event.title) ?? "Histórico";
 }
 
@@ -48,6 +52,8 @@ function holidayTitle(event: CalEvent): string {
   if (event.holidayKind === "election") {
     return electionRaceLabel(fromIso(event.iso).getFullYear());
   }
+  if (event.holidayKind === "enem") return "ENEM";
+  if (event.holidayKind === "season") return event.title;
   return officialHolidayTitle(event);
 }
 
@@ -61,23 +67,15 @@ type HolidaysTabProps = {
   pool: CalEvent[];
   municipal: boolean;
   commemorative: boolean;
-  elections: boolean;
-  electionSecondRound: boolean;
   facultative: boolean;
   national: boolean;
   cityName: string;
   cityUf: string;
   cityIbge: number | null;
-  electionPlace: string;
-  electionZone: string;
   onToggleMunicipal: (on: boolean) => void;
   onToggleCommemorative: (on: boolean) => void;
-  onToggleElections: (on: boolean) => void;
-  onToggleSecondRound: (on: boolean) => void;
   onToggleFacultative: (on: boolean) => void;
   onToggleNational: (on: boolean) => void;
-  onElectionPlace: (value: string) => void;
-  onElectionZone: (value: string) => void;
   onSearchCity: (query: string, uf?: string) => Promise<CityHit[]>;
   onPickCity: (city: CityHit) => void;
   onLocate: () => Promise<CityHit | null>;
@@ -94,23 +92,15 @@ export function HolidaysTab({
   pool,
   municipal,
   commemorative,
-  elections,
-  electionSecondRound,
   facultative,
   national,
   cityName,
   cityUf,
   cityIbge,
-  electionPlace,
-  electionZone,
   onToggleMunicipal,
   onToggleCommemorative,
-  onToggleElections,
-  onToggleSecondRound,
   onToggleFacultative,
   onToggleNational,
-  onElectionPlace,
-  onElectionZone,
   onSearchCity,
   onPickCity,
   onLocate,
@@ -122,8 +112,6 @@ export function HolidaysTab({
   const [uf, setUf] = useState(cityUf);
   const [draftMunicipal, setDraftMunicipal] = useState(municipal);
   const [draftCommemorative, setDraftCommemorative] = useState(commemorative);
-  const [draftElections, setDraftElections] = useState(elections);
-  const [draftSecondRound, setDraftSecondRound] = useState(electionSecondRound);
   const [draftFacultative, setDraftFacultative] = useState(facultative);
   const [draftNational, setDraftNational] = useState(national);
   const [pendingCity, setPendingCity] = useState<CityHit | null>(
@@ -138,13 +126,11 @@ export function HolidaysTab({
     setUf(cityUf);
     setDraftMunicipal(municipal);
     setDraftCommemorative(commemorative);
-    setDraftElections(elections);
-    setDraftSecondRound(electionSecondRound);
     setDraftFacultative(facultative);
     setDraftNational(national);
     setPendingCity(cityIbge ? { ibge: cityIbge, name: cityName, uf: cityUf } : null);
     setSuggestions([]);
-  }, [adding, cityName, cityUf, cityIbge, municipal, commemorative, elections, electionSecondRound, facultative, national]);
+  }, [adding, cityName, cityUf, cityIbge, municipal, commemorative, facultative, national]);
 
   function fold(value: string) {
     return value
@@ -245,7 +231,7 @@ export function HolidaysTab({
           <CalendarGlyph className="size-5" flash={glyphFlash} />
         </Button>
       </div>
-      <A11yHint>Datas em que não há expediente, mais comemorações e eleições do mês.</A11yHint>
+      <A11yHint>Datas em que não há expediente, mais comemorações do mês.</A11yHint>
       {adding ? (
         <div className="cal-holiday-opts mt-3 flex flex-col border-t border-line pt-3">
           <button
@@ -390,69 +376,6 @@ export function HolidaysTab({
               ) : null}
             </div>
           </div>
-          <button
-            type="button"
-            className="flex h-7 w-full items-center gap-3 text-left text-sm"
-            aria-pressed={draftElections}
-            onClick={() => {
-              const next = !draftElections;
-              setDraftElections(next);
-              onToggleElections(next);
-            }}
-          >
-            <KindMark on={draftElections} />
-            Eleições
-          </button>
-          <A11yHint>Marca o 1º turno. O 2º só entra se o TSE confirmar ou se você ligar.</A11yHint>
-          <div className="flex gap-2 pl-7">
-            <input
-              value={electionPlace}
-              disabled={!draftElections}
-              onChange={(event) => {
-                const next = event.target.value.replace(/[^\p{L}\s-]/gu, "");
-                onElectionPlace(next.replace(/\s+/g, " "));
-              }}
-              placeholder="Local"
-              inputMode="text"
-              autoCapitalize="words"
-              autoCorrect="off"
-              className={cn(
-                "h-11 min-w-0 flex-1 rounded-xl bg-bg px-3 text-sm text-fg shadow-[0_0_0_1px_var(--c-line)] outline-none placeholder:text-muted",
-                !draftElections && "cursor-not-allowed opacity-45",
-              )}
-            />
-            <input
-              value={electionZone}
-              disabled={!draftElections}
-              onChange={(event) => onElectionZone(event.target.value.replace(/\D/g, "").slice(0, 4))}
-              placeholder="Zona"
-              inputMode="numeric"
-              maxLength={4}
-              aria-label="Zona eleitoral"
-              className={cn(
-                "h-11 w-[4.5rem] shrink-0 rounded-xl bg-bg px-0 text-center text-sm tabular-nums text-fg shadow-[0_0_0_1px_var(--c-line)] outline-none placeholder:text-muted",
-                !draftElections && "cursor-not-allowed opacity-45",
-              )}
-            />
-          </div>
-          <button
-            type="button"
-            className={cn(
-              "flex h-7 w-full items-center gap-3 pl-7 text-left text-sm",
-              !draftElections && "cursor-not-allowed opacity-45",
-            )}
-            aria-pressed={draftElections ? draftSecondRound : false}
-            disabled={!draftElections}
-            onClick={() => {
-              if (!draftElections) return;
-              const next = !draftSecondRound;
-              setDraftSecondRound(next);
-              onToggleSecondRound(next);
-            }}
-          >
-            <KindMark on={draftElections ? draftSecondRound : false} />
-            2º turno
-          </button>
         </div>
       ) : null}
       {empty ? (
@@ -523,20 +446,12 @@ export function HolidaysTab({
                 </button>
                 <div className={cn("cal-event-details", open && "is-open")}>
                   <div>
-                    {(() => {
-                      const detail =
-                        event.holidayKind === "election"
-                          ? [electionPlace, electionZone ? `Zona ${electionZone}` : ""]
-                              .filter(Boolean)
-                              .join(" · ")
-                          : holidayTypeName(event);
-                      return detail ? (
-                        <p className="grid grid-cols-[2.85rem_minmax(0,1fr)_7.25rem_1.65rem] items-baseline gap-x-2.5 pb-3 text-xs text-muted">
-                          <span />
-                          <span className="col-span-2 whitespace-nowrap">{detail}</span>
-                        </p>
-                      ) : null;
-                    })()}
+                    {holidayTypeName(event) ? (
+                      <p className="grid grid-cols-[2.85rem_minmax(0,1fr)_7.25rem_1.65rem] items-baseline gap-x-2.5 pb-3 text-xs text-muted">
+                        <span />
+                        <span className="col-span-2 whitespace-nowrap">{holidayTypeName(event)}</span>
+                      </p>
+                    ) : null}
                   </div>
                 </div>
               </li>

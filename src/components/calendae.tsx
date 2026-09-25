@@ -9,6 +9,7 @@ import { ContactLine } from "@/components/contact-line";
 import { HeaderMenu } from "@/components/header-menu";
 import { HistoryTab } from "@/components/history-tab";
 import { HolidaysTab } from "@/components/holidays-tab";
+import { DestaquesTab } from "@/components/destaques-tab";
 import { MonthGrid } from "@/components/month-grid";
 import { Button } from "@/components/ui/button";
 import { redirectToLoginIfRequired } from "@/lib/app-data";
@@ -45,14 +46,15 @@ import {
   minutesToTime,
   newEventId,
   intervalFollow,
+  followResolved,
   occurrenceInMonth,
   officeHolidayLabel,
-  periodToEvent,
   postponeIso,
   readEventsRaw,
   readHolidayStore,
   readPeriodsRaw,
   readSettingsRaw,
+  resolvedMarks,
   shiftMonth,
   tabAllowsEvent,
   timeToMinutes,
@@ -65,6 +67,7 @@ import {
   type CalEvent,
   type EventKind,
   type HolidayStore,
+  type IntervalRule,
   type MonthSide,
   type Period,
   type Settings,
@@ -72,6 +75,8 @@ import {
 import { inssPayIso, parseNb, rememberInssTable, type InssYearTable } from "@/lib/inss";
 import { commemorativeDates } from "@/lib/commemorative";
 import { electionDates, firstRoundIso, secondRoundIso } from "@/lib/elections";
+import { enemDates } from "@/lib/enem";
+import { seasonDates } from "@/lib/seasons";
 import {
   dayAfter,
   ensureAlmanac,
@@ -134,6 +139,10 @@ function readSettings(): Settings {
       municipal: Boolean(parsed.municipal),
       commemorative: Boolean(parsed.commemorative),
       elections: typeof parsed.elections === "boolean" ? parsed.elections : true,
+      enem: Boolean(parsed.enem),
+      irpfOn: parsed.irpfOn !== false,
+      seasons: parsed.seasons !== false,
+      hourCycle: parsed.hourCycle === "24" ? "24" : "12",
       electionSecondRound: Boolean(parsed.electionSecondRound),
       electionSecondTriedYear:
         typeof parsed.electionSecondTriedYear === "number" ? parsed.electionSecondTriedYear : null,
@@ -285,9 +294,18 @@ const KIND_OPTIONS: { value: EventKind | ""; label: string }[] = [
   ...EVENT_KINDS.map((kind) => ({ value: kind, label: kind })),
 ];
 
-const SIDE_OPTIONS: { value: MonthSide; label: string }[] = [
-  { value: "primeiros", label: "primeiros" },
-  { value: "ultimos", label: "últimos" },
+const SIDE_OPTIONS: { value: MonthSide | ""; label: string }[] = [
+  { value: "", label: "Qualquer dia" },
+  { value: "primeiros", label: "Primeiro dia" },
+  { value: "ultimos", label: "Último dia" },
+];
+
+const RULE_OPTIONS: { value: IntervalRule; label: string }[] = [
+  { value: "ignorar", label: "Ignorar" },
+  { value: "preceder", label: "Preceder" },
+  { value: "proceder", label: "Proceder" },
+  { value: "adiar", label: "Adiar" },
+  { value: "cancelar", label: "Cancelar" },
 ];
 
 function HojeIcon({ day }: { day: number }) {
@@ -360,41 +378,45 @@ function KindPick({
           onClose();
         }}
       />
-      {kind === "personalizado" ? (
-        <input
-          value={everyDays}
-          onChange={(event) => onEveryDays(event.target.value.replace(/\D/g, "").slice(0, 3))}
-          placeholder="dias"
-          inputMode="numeric"
-          aria-label="Intervalo em dias"
-          className="cal-field-sm h-11 rounded-xl bg-bg px-2 text-center text-sm tabular-nums text-fg shadow-[0_0_0_1px_var(--c-line)] outline-none placeholder:text-muted"
-        />
-      ) : null}
+      <input
+        value={!kind || kind === "personalizado" ? everyDays : ""}
+        disabled={Boolean(kind && kind !== "personalizado")}
+        readOnly={Boolean(kind && kind !== "personalizado")}
+        onChange={(event) => {
+          if (kind && kind !== "personalizado") return;
+          const next = event.target.value.replace(/\D/g, "").slice(0, 3);
+          onEveryDays(next);
+          if (next && !kind) onKind("personalizado");
+        }}
+        placeholder="dias"
+        inputMode="numeric"
+        aria-label="Intervalo em dias"
+        className={cn(
+          "cal-field-sm h-11 rounded-xl bg-bg px-2 text-center text-sm tabular-nums text-fg shadow-[0_0_0_1px_var(--c-line)] outline-none placeholder:text-muted",
+          kind && kind !== "personalizado" && "cursor-not-allowed opacity-45",
+        )}
+      />
     </div>
   );
 }
 
 function PlacePick({
   side,
-  nth,
   util,
   open,
   locked,
   onOpen,
   onClose,
   onSide,
-  onNth,
   onUtil,
 }: {
-  side: MonthSide;
-  nth: string;
+  side: MonthSide | "";
   util: boolean;
   open: boolean;
   locked?: boolean;
   onOpen: () => void;
   onClose: () => void;
-  onSide: (next: MonthSide) => void;
-  onNth: (next: string) => void;
+  onSide: (next: MonthSide | "") => void;
   onUtil: () => void;
 }) {
   return (
@@ -418,22 +440,6 @@ function PlacePick({
           onClose();
         }}
       />
-      <input
-        value={locked ? "" : nth}
-        readOnly={locked}
-        disabled={locked}
-        onChange={(event) => {
-          if (locked) return;
-          onNth(event.target.value.replace(/\D/g, "").slice(0, 2));
-        }}
-        placeholder="dias"
-        inputMode="numeric"
-        aria-label="Quantos dias"
-        className={cn(
-          "cal-field-sm h-11 rounded-xl bg-bg px-2 text-center text-sm tabular-nums text-fg shadow-[0_0_0_1px_var(--c-line)] outline-none placeholder:text-muted",
-          locked && "cursor-not-allowed opacity-45",
-        )}
-      />
       <button
         type="button"
         aria-pressed={locked ? false : util}
@@ -448,6 +454,44 @@ function PlacePick({
         <KindMark on={locked ? false : util} />
       </button>
     </div>
+  );
+}
+
+function RulePick({
+  rule,
+  open,
+  locked,
+  onOpen,
+  onClose,
+  onRule,
+}: {
+  rule: IntervalRule;
+  open: boolean;
+  locked?: boolean;
+  onOpen: () => void;
+  onClose: () => void;
+  onRule: (next: IntervalRule) => void;
+}) {
+  return (
+    <HeaderMenu
+      label="Se cair em feriado"
+      value={rule}
+      options={RULE_OPTIONS}
+      open={open && !locked}
+      wide
+      fixed
+      soft
+      disabled={locked}
+      buttonClassName="cal-kind-btn"
+      optionClassName="cal-kind-option"
+      onOpen={onOpen}
+      onClose={onClose}
+      onPick={(next) => {
+        if (locked) return;
+        onRule(next);
+        onClose();
+      }}
+    />
   );
 }
 
@@ -718,7 +762,9 @@ export function Calendae() {
   const [draftMonthSide, setDraftMonthSide] = useState<MonthSide | "">("");
   const [draftMonthNth, setDraftMonthNth] = useState("");
   const [draftMonthUtil, setDraftMonthUtil] = useState(false);
+  const [draftIntervalRule, setDraftIntervalRule] = useState<IntervalRule>("ignorar");
   const [sideMenu, setSideMenu] = useState(false);
+  const [ruleMenu, setRuleMenu] = useState(false);
   const [draftNotify, setDraftNotify] = useState(false);
   const [draftDurTime, setDraftDurTime] = useState("");
   const [draftDurDays, setDraftDurDays] = useState("");
@@ -728,6 +774,7 @@ export function Calendae() {
   const [openMenu, setOpenMenu] = useState<"month" | null>(null);
   const [openEventId, setOpenEventId] = useState<string | null>(null);
   const [openHolidayIso, setOpenHolidayIso] = useState<string | null>(null);
+  const [openHighlightId, setOpenHighlightId] = useState<string | null>(null);
   const [openBirthdayId, setOpenBirthdayId] = useState<string | null>(null);
   const [openBenefitId, setOpenBenefitId] = useState<string | null>(null);
   const [openBillId, setOpenBillId] = useState<string | null>(null);
@@ -784,6 +831,7 @@ export function Calendae() {
     const live: CalEvent[] = [];
     const archived: CalEvent[] = [];
     for (const event of loaded) {
+      if (event.source === "period" || isPeriodEvent(event)) continue;
       if (isDueForHistory(event, day)) archived.push(archiveEvent(event));
       else live.push(event);
     }
@@ -800,9 +848,6 @@ export function Calendae() {
       };
     }
     setHolidayStore(store);
-    const storedPeriods = readPeriods();
-    setLocalEvents(mergeEventsById(live, storedPeriods.map(periodToEvent)));
-    if (storedPeriods.length) localStorage.setItem("calendae-periods", "[]");
     const inss = readInssStore();
     applyInssStore(inss);
     setInssStore(inss);
@@ -1107,7 +1152,7 @@ export function Calendae() {
       ]),
     [holidayStore, year, municipalEvents],
   );
-  const irpfEvent = useMemo(() => irpfForYear(year), [year, irpfRev]);
+  const irpfEvent = useMemo(() => (settings.irpfOn ? irpfForYear(year) : null), [year, irpfRev, settings.irpfOn]);
   const irpfLots = useMemo(() => irpfLotsForYear(year), [year, irpfRev]);
   const laborMonth = settings.laborMonth;
   const pis = useMemo(() => {
@@ -1173,10 +1218,16 @@ export function Calendae() {
   const extraHolidays = useMemo(() => {
     const list: CalEvent[] = [];
     if (settings.commemorative) list.push(...commemorativeDates(year));
-    if (settings.elections) list.push(...electionDates(year, showElectionSecond(year, settings.electionSecondRound)));
     if (settings.municipal) list.push(...municipalEvents);
     return list;
-  }, [settings.commemorative, settings.elections, settings.electionSecondRound, settings.municipal, municipalEvents, year]);
+  }, [settings.commemorative, settings.municipal, municipalEvents, year]);
+  const highlights = useMemo(() => {
+    const list: CalEvent[] = [];
+    if (settings.elections) list.push(...electionDates(year, showElectionSecond(year, settings.electionSecondRound)));
+    if (settings.enem) list.push(...enemDates(year));
+    if (settings.seasons) list.push(...seasonDates(year));
+    return list;
+  }, [settings.elections, settings.electionSecondRound, settings.enem, settings.seasons, year]);
   const benefitEvents = useMemo(() => {
     const month = view.getMonth();
     return localEvents.flatMap((event) => {
@@ -1190,11 +1241,12 @@ export function Calendae() {
   const allEvents = useMemo(
     () =>
       uniqueEvents([
-        ...localEvents.filter((event) => event.source !== "benefit"),
+        ...localEvents.filter((event) => event.source !== "benefit" && event.source !== "period"),
         ...benefitEvents,
         ...holidays,
         ...extraHolidays,
-        irpfEvent,
+        ...highlights,
+        ...(irpfEvent ? [irpfEvent] : []),
         ...(pis ? [pis] : []),
         ...(fgts ? [fgts] : []),
         ...(bolsa ? [bolsa] : []),
@@ -1203,29 +1255,45 @@ export function Calendae() {
         ...ipvaGrid,
         ...googleEvents.filter((event) => !isDueForHistory(event, today)),
       ]).filter((event) => tabAllowsEvent(settings.tabs, event)),
-    [localEvents, benefitEvents, holidays, extraHolidays, irpfEvent, pis, fgts, bolsa, gas, licenca, ipvaGrid, googleEvents, today, settings.tabs],
+    [localEvents, benefitEvents, holidays, extraHolidays, highlights, irpfEvent, pis, fgts, bolsa, gas, licenca, ipvaGrid, googleEvents, today, settings.tabs],
   );
-  const cells = useMemo(
-    () => buildMonthCells(view, today, allEvents, settings.weekStart),
-    [view, today, allEvents, settings.weekStart],
-  );
-  const periodIsos = useMemo(() => {
+  const blockedHolidays = useMemo(() => {
     const set = new Set<string>();
-    if (!settings.tabs.agenda) return set;
-    for (const event of localEvents) {
-      if (!isPeriodEvent(event)) continue;
-      for (const iso of eventSpanIsos(event)) set.add(iso);
+    for (const event of [...holidays, ...extraHolidays]) {
+      if (event.holidayKind === "election" || event.holidayKind === "enem" || event.holidayKind === "season") continue;
+      set.add(event.iso);
     }
     return set;
-  }, [localEvents, settings.tabs.agenda]);
+  }, [holidays, extraHolidays]);
+  const gridEvents = useMemo(() => {
+    const month = view.getMonth();
+    const start = toIso(civilDate(year, month, 1));
+    const end = toIso(civilDate(year, month + 1, 0));
+    const horizon = toIso(civilDate(year, month + 1, 21));
+    return allEvents.flatMap((event) => {
+      if (!event.kind || !event.intervalRule || event.intervalRule === "ignorar") return [event];
+      return resolvedMarks(event, blockedHolidays, horizon)
+        .filter((iso) => iso >= start && iso <= end)
+        .map((iso) => ({ ...event, iso, kind: undefined, everyDays: undefined, monthSide: undefined }));
+    });
+  }, [allEvents, blockedHolidays, view, year]);
+  const cells = useMemo(
+    () => buildMonthCells(view, today, gridEvents, settings.weekStart),
+    [view, today, gridEvents, settings.weekStart],
+  );
+  const periodIsos = useMemo(() => new Set<string>(), []);
   const monthEvents = useMemo(() => {
     const month = view.getMonth();
     return allEvents
       .flatMap((event) => {
-        if (event.source === "holiday" || event.source === "birthday" || event.source === "benefit" || event.source === "bill" || event.source === "boleto" || event.source === "irpf" || event.source === "pis" || event.source === "ipva" || event.source === "fgts" || event.source === "bolsa" || event.source === "gas" || event.source === "licenca")
+        if (event.source === "holiday" || event.source === "birthday" || event.source === "benefit" || event.source === "bill" || event.source === "boleto" || event.source === "irpf" || event.source === "pis" || event.source === "ipva" || event.source === "fgts" || event.source === "bolsa" || event.source === "gas" || event.source === "licenca" || event.source === "period" || isPeriodEvent(event))
           return [];
-        if (isPeriodEvent(event)) {
-          return eventOverlapsMonth(event, year, month) ? [{ event, iso: event.iso }] : [];
+        if (event.kind && event.intervalRule && event.intervalRule !== "ignorar") {
+          const start = toIso(civilDate(year, month, 1));
+          const end = toIso(civilDate(year, month + 1, 0));
+          const horizon = toIso(civilDate(year, month + 1, 21));
+          const marks = resolvedMarks(event, blockedHolidays, horizon).filter((iso) => iso >= start && iso <= end);
+          return marks[0] ? [{ event, iso: marks[0] }] : [];
         }
         if (
           event.kind === "semanal" ||
@@ -1257,7 +1325,7 @@ export function Calendae() {
         (a, b) =>
           a.iso.localeCompare(b.iso) || (a.event.time ?? "").localeCompare(b.event.time ?? ""),
       );
-  }, [allEvents, view, year, today, nowMs]);
+  }, [allEvents, blockedHolidays, view, year, today, nowMs]);
   const birthdays = useMemo(
     () =>
       localEvents
@@ -1365,8 +1433,9 @@ export function Calendae() {
     if (!hydrated) return;
     startReminders(
       [...localEvents, ...googleEvents].filter((event) => tabAllowsEvent(settings.tabs, event)),
+      settings.hourCycle,
     );
-  }, [hydrated, localEvents, googleEvents, settings.tabs]);
+  }, [hydrated, localEvents, googleEvents, settings.tabs, settings.hourCycle]);
 
   const monthOptions = MONTHS.map((label, value) => ({ value, label }));
 
@@ -1400,6 +1469,7 @@ export function Calendae() {
     setDraftDate(iso);
     setOpenEventId(null);
     setOpenHolidayIso(null);
+    setOpenHighlightId(null);
 
     setOpenBirthdayId(null);
     setOpenBenefitId(null);
@@ -1430,20 +1500,21 @@ export function Calendae() {
     monthSide?: MonthSide;
     monthNth?: number;
     monthUtil?: boolean;
+    intervalRule?: IntervalRule;
   } {
+    const rule = draftKind ? { intervalRule: draftIntervalRule } : { intervalRule: undefined };
     const ordinalKinds: EventKind[] = ["semanal", "mensal", "semestral", "anual"];
     if (draftKind && ordinalKinds.includes(draftKind)) {
       const n = Number(draftMonthNth);
       const hasNth = Number.isFinite(n) && n > 0;
-      const side = draftMonthSide === "ultimos" ? "ultimos" : "primeiros";
-      const usesPlace = draftMonthSide === "ultimos" || draftMonthUtil || hasNth;
-      if (usesPlace) {
+      if (draftMonthSide === "primeiros" || draftMonthSide === "ultimos") {
         return {
           kind: draftKind,
           everyDays: undefined,
-          monthSide: side,
+          monthSide: draftMonthSide,
           monthNth: hasNth ? n : 1,
           monthUtil: draftMonthUtil,
+          ...rule,
         };
       }
       return {
@@ -1452,16 +1523,17 @@ export function Calendae() {
         monthSide: undefined,
         monthNth: undefined,
         monthUtil: undefined,
+        ...rule,
       };
     }
     if (draftKind !== "personalizado") {
-      return { kind: draftKind ?? undefined, everyDays: undefined, monthSide: undefined, monthNth: undefined, monthUtil: undefined };
+      return { kind: draftKind ?? undefined, everyDays: undefined, monthSide: undefined, monthNth: undefined, monthUtil: undefined, ...rule };
     }
     const step = Number(draftEveryDays);
     if (!Number.isFinite(step) || step < 1) {
-      return { kind: undefined, everyDays: undefined, monthSide: undefined, monthNth: undefined, monthUtil: undefined };
+      return { kind: undefined, everyDays: undefined, monthSide: undefined, monthNth: undefined, monthUtil: undefined, ...rule };
     }
-    return { kind: "personalizado", everyDays: step, monthSide: undefined, monthNth: undefined, monthUtil: undefined };
+    return { kind: "personalizado", everyDays: step, monthSide: undefined, monthNth: undefined, monthUtil: undefined, ...rule };
   }
 
   function durationPatch(): { durationDays?: number; durationMinutes?: number } {
@@ -1498,7 +1570,7 @@ export function Calendae() {
       contact: draftContact.trim() ? fitContact(draftContact) : undefined,
       ...kindPatch(),
       ...durationPatch(),
-      source: !kindPatch().kind && Number(draftDurDays) > 0 ? "period" : "local",
+      source: "local",
       notify: draftNotify,
     };
     if (isDueForHistory(event, today, new Date(nowMs))) {
@@ -1567,6 +1639,7 @@ export function Calendae() {
     setOpenEventId((cur) => (cur === event.id ? null : event.id));
     setEditingEventId(null);
     setOpenHolidayIso(null);
+    setOpenHighlightId(null);
 
     setOpenBirthdayId(null);
     setOpenBenefitId(null);
@@ -1599,11 +1672,7 @@ export function Calendae() {
       ...kindPatch(),
       ...durationPatch(),
       source:
-        current?.source === "birthday" || current?.source === "google"
-          ? current.source
-          : !kindPatch().kind && Number(draftDurDays) > 0
-            ? "period"
-            : "local",
+        current?.source === "birthday" || current?.source === "google" ? current.source : "local",
       notify: draftNotify,
     };
     if (isDueForHistory(next, today, new Date(nowMs))) {
@@ -1648,7 +1717,7 @@ export function Calendae() {
       contact: draftContact.trim() ? fitContact(draftContact) : undefined,
       ...kindPatch(),
       ...durationPatch(),
-      source: !kindPatch().kind && Number(draftDurDays) > 0 ? "period" : "local",
+      source: "local",
       notify: draftNotify,
     };
     setLocalEvents((prev) => {
@@ -1670,6 +1739,7 @@ export function Calendae() {
     draftMonthSide,
     draftMonthNth,
     draftMonthUtil,
+    draftIntervalRule,
     draftNotify,
     draftDurTime,
     draftDurDays,
@@ -1682,11 +1752,7 @@ export function Calendae() {
     if (!title) return;
     const current = localEvents.find((event) => event.id === editingEventId);
     const source =
-      current?.source === "birthday" || current?.source === "google"
-        ? current.source
-        : !kindPatch().kind && Number(draftDurDays) > 0
-          ? "period"
-          : "local";
+      current?.source === "birthday" || current?.source === "google" ? current.source : "local";
     updateEvent(editingEventId, {
       title: title.slice(0, 45),
       iso: draftDate,
@@ -1710,6 +1776,7 @@ export function Calendae() {
     draftMonthSide,
     draftMonthNth,
     draftMonthUtil,
+    draftIntervalRule,
     draftNotify,
     draftDurTime,
     draftDurDays,
@@ -1927,43 +1994,22 @@ export function Calendae() {
             pool={holidayPool}
             municipal={settings.municipal}
             commemorative={settings.commemorative}
-            elections={settings.elections}
-            electionSecondRound={showElectionSecond(year, settings.electionSecondRound)}
             facultative={settings.facultative}
             national={settings.national}
             cityName={settings.cityName}
             cityUf={settings.cityUf}
             cityIbge={settings.cityIbge}
-            electionPlace={settings.electionPlace}
-            electionZone={settings.electionZone}
             onToggleMunicipal={(on) => {
               setSettings((prev) => ({ ...prev, municipal: on }));
             }}
             onToggleCommemorative={(on) => {
               setSettings((prev) => ({ ...prev, commemorative: on }));
             }}
-            onToggleElections={(on) => {
-              setSettings((prev) => ({ ...prev, elections: on }));
-            }}
-            onToggleSecondRound={(on) => {
-              stampSecondRound(year, on ? secondRoundIso(year) : null, on ? "user" : null);
-              setSettings((prev) => ({
-                ...prev,
-                electionSecondRound: on,
-                electionSecondTriedYear: on ? prev.electionSecondTriedYear : year,
-              }));
-            }}
             onToggleFacultative={(on) => {
               setSettings((prev) => ({ ...prev, facultative: on }));
             }}
             onToggleNational={(on) => {
               setSettings((prev) => ({ ...prev, national: on }));
-            }}
-            onElectionPlace={(value) => {
-              setSettings((prev) => ({ ...prev, electionPlace: value }));
-            }}
-            onElectionZone={(value) => {
-              setSettings((prev) => ({ ...prev, electionZone: value }));
             }}
             onSearchCity={async (query, uf) => {
               const { searchMunicipio } = await import("@/lib/calendar-server");
@@ -1975,6 +2021,7 @@ export function Calendae() {
               pingGlyph();
               setSelected(event.iso);
               setOpenHolidayIso((cur) => (cur === event.id ? null : event.id));
+              setOpenHighlightId(null);
               setOpenEventId(null);
           
               setOpenBirthdayId(null);
@@ -1988,6 +2035,53 @@ export function Calendae() {
     setOpenBolsaId(null);
     setOpenGasId(null);
     setOpenLicencaId(null);
+            }}
+          />
+          ) : null}
+
+          {settings.tabs.destaques ? (
+          <DestaquesTab
+            year={year}
+            month={view.getMonth()}
+            today={today}
+            openId={openHighlightId}
+            events={highlights}
+            elections={settings.elections}
+            electionSecondRound={showElectionSecond(year, settings.electionSecondRound)}
+            enem={settings.enem}
+            seasons={settings.seasons}
+            electionPlace={settings.electionPlace}
+            electionZone={settings.electionZone}
+            onToggleElections={(on) => setSettings((prev) => ({ ...prev, elections: on }))}
+            onToggleSecondRound={(on) => {
+              stampSecondRound(year, on ? secondRoundIso(year) : null, on ? "user" : null);
+              setSettings((prev) => ({
+                ...prev,
+                electionSecondRound: on,
+                electionSecondTriedYear: on ? prev.electionSecondTriedYear : year,
+              }));
+            }}
+            onToggleEnem={(on) => setSettings((prev) => ({ ...prev, enem: on }))}
+            onToggleSeasons={(on) => setSettings((prev) => ({ ...prev, seasons: on }))}
+            onElectionPlace={(value) => setSettings((prev) => ({ ...prev, electionPlace: value }))}
+            onElectionZone={(value) => setSettings((prev) => ({ ...prev, electionZone: value }))}
+            onOpen={(event) => {
+              pingGlyph();
+              setSelected(event.iso);
+              setOpenHighlightId((cur) => (cur === event.id ? null : event.id));
+              setOpenHolidayIso(null);
+              setOpenEventId(null);
+              setOpenBirthdayId(null);
+              setOpenBenefitId(null);
+              setOpenHistoryId(null);
+              setOpenBillId(null);
+              setOpenIrpfId(null);
+              setOpenPisId(null);
+              setOpenIpvaId(null);
+              setOpenFgtsId(null);
+              setOpenBolsaId(null);
+              setOpenGasId(null);
+              setOpenLicencaId(null);
             }}
           />
           ) : null}
@@ -2014,12 +2108,14 @@ export function Calendae() {
                     setDraftMonthSide("");
                     setDraftMonthNth("");
                     setDraftMonthUtil(false);
+                    setDraftIntervalRule("ignorar");
                     setDraftNotify(false);
                     setDraftDurTime("");
                     setDraftDurDays("");
                     setDraftDate(selected);
                     setKindMenu(false);
                     setSideMenu(false);
+                    setRuleMenu(false);
                     setEditingEventId(null);
                   }
                   setAdding((v) => !v);
@@ -2029,10 +2125,11 @@ export function Calendae() {
               </Button>
             </div>
             <A11yHint>Compromissos do mês. Toque para ver detalhes, editar ou apagar.</A11yHint>
+            <div className="mt-3 border-t border-line" />
 
             {adding ? (
               <form
-                className="mt-3 flex flex-col gap-2 border-t border-line pt-3"
+                className="flex flex-col gap-2 pt-3"
                 onSubmit={(event) => {
                   event.preventDefault();
                 }}
@@ -2076,7 +2173,7 @@ export function Calendae() {
                 />
                 <HolidayNote iso={draftDate} events={[...holidays, ...extraHolidays]} />
                 <div className="flex items-center">
-                  <TimePick value={draftTime} onChange={setDraftTime} />
+                  <TimePick value={draftTime} cycle={settings.hourCycle} onChange={setDraftTime} />
                   <NotifyToggle on={draftNotify} onToggle={() => void armNotify(!draftNotify)} />
                 </div>
                 <DurationPick
@@ -2101,43 +2198,52 @@ export function Calendae() {
                         setDraftMonthUtil(false);
                         setSideMenu(false);
                       }
-                    } else {
-                      setDraftMonthSide((side) => side || "primeiros");
                     }
                   }}
                   onEveryDays={setDraftEveryDays}
                 />
                 <PlacePick
-                  side={draftMonthSide === "ultimos" ? "ultimos" : "primeiros"}
-                  nth={draftMonthNth}
+                  side={draftMonthSide}
                   util={draftMonthUtil}
                   open={sideMenu}
                   locked={!draftKind}
                   onOpen={() => setSideMenu(true)}
                   onClose={() => setSideMenu(false)}
                   onSide={setDraftMonthSide}
-                  onNth={setDraftMonthNth}
                   onUtil={() => setDraftMonthUtil((v) => !v)}
+                />
+                <p className="text-xs text-muted">Feriados</p>
+                <A11yHint>O que fazer quando uma data do intervalo cair em feriado.</A11yHint>
+                <RulePick
+                  rule={draftIntervalRule}
+                  open={ruleMenu}
+                  locked={!draftKind}
+                  onOpen={() => setRuleMenu(true)}
+                  onClose={() => setRuleMenu(false)}
+                  onRule={setDraftIntervalRule}
                 />
               </form>
             ) : null}
 
             {monthEvents.length === 0 && !adding ? (
-              <p className="mt-3 text-pretty text-sm text-muted">Agenda aberta.</p>
+              <p className="pt-3 text-pretty text-sm text-muted">Agenda aberta.</p>
             ) : (
-              <ul className="mt-1">
+              <ul>
                 {monthEvents.map(({ event, iso }) => {
                   const past = iso < today;
                   const open = openEventId === event.id;
                   const day = fromIso(iso);
-                  const follow = intervalFollow(event, iso, year, view.getMonth());
+                  const follow =
+                    event.intervalRule && event.intervalRule !== "ignorar"
+                      ? followResolved(event, blockedHolidays, iso, year, view.getMonth())
+                      : intervalFollow(event, iso, year, view.getMonth());
                   const nextDates = follow.rest;
                   const hop = follow.hop;
                   const hopLabel = hop
                     ? MONTHS[fromIso(hop).getMonth()].slice(0, 3).replace(/^./, (c) => c.toUpperCase())
                     : null;
                   return (
-                    <li key={`${event.id}-${iso}`}>
+                    <li key={`${event.id}-${iso}`} className="[&:first-child>button]:border-t-0">
                       <button
                         type="button"
                         onClick={() => openAgendaItem(event, iso)}
@@ -2170,16 +2276,14 @@ export function Calendae() {
                             open ? "font-bold text-fg" : "font-normal text-muted",
                           )}
                         >
-                          {isPeriodEvent(event) ? (
-                            <span>(período)</span>
-                          ) : event.kind ? (
+                          {event.kind ? (
                             <span>
                               (
                               {event.kind === "personalizado" && event.everyDays
                                 ? `${event.everyDays} dias`
                                 : event.monthSide
                                   ? [
-                                      event.monthSide === "ultimos" ? "último" : "primeiro",
+                                      event.monthSide === "ultimos" ? "último dia" : "primeiro dia",
                                       event.monthNth && event.monthNth > 1 ? event.monthNth : null,
                                       event.monthUtil ? "útil" : null,
                                     ]
@@ -2190,8 +2294,8 @@ export function Calendae() {
                             </span>
                           ) : null}
                           {event.time ? (
-                            <span>{formatTime(event.time)}</span>
-                          ) : event.kind || isPeriodEvent(event) ? null : (
+                            <span>{formatTime(event.time, settings.hourCycle)}</span>
+                          ) : event.kind ? null : (
                             <span>{weekdayName(iso).slice(0, 3)}</span>
                           )}
                         </span>
@@ -2236,7 +2340,7 @@ export function Calendae() {
                               <DatePick value={draftDate} weekStart={settings.weekStart} onChange={setDraftDate} />
                               <HolidayNote iso={draftDate} events={[...holidays, ...extraHolidays]} />
                               <div className="flex items-center">
-                                <TimePick value={draftTime} onChange={setDraftTime} />
+                                <TimePick value={draftTime} cycle={settings.hourCycle} onChange={setDraftTime} />
                                 <NotifyToggle
                                   on={draftNotify}
                                   onToggle={() => void armNotify(!draftNotify)}
@@ -2262,23 +2366,29 @@ export function Calendae() {
                                       setDraftMonthUtil(false);
                                       setSideMenu(false);
                                     }
-                                  } else {
-                                    setDraftMonthSide((side) => side || "primeiros");
                                   }
                                 }}
                                 onEveryDays={setDraftEveryDays}
                               />
                               <PlacePick
-                                side={draftMonthSide === "ultimos" ? "ultimos" : "primeiros"}
-                                nth={draftMonthNth}
+                                side={draftMonthSide}
                                 util={draftMonthUtil}
                                 open={sideMenu}
                                 locked={!draftKind}
                                 onOpen={() => setSideMenu(true)}
                                 onClose={() => setSideMenu(false)}
                                 onSide={setDraftMonthSide}
-                                onNth={setDraftMonthNth}
                                 onUtil={() => setDraftMonthUtil((v) => !v)}
+                              />
+                              <p className="text-xs text-muted">Feriados</p>
+                              <A11yHint>O que fazer quando uma data do intervalo cair em feriado.</A11yHint>
+                              <RulePick
+                                rule={draftIntervalRule}
+                                open={ruleMenu}
+                                locked={!draftKind}
+                                onOpen={() => setRuleMenu(true)}
+                                onClose={() => setRuleMenu(false)}
+                                onRule={setDraftIntervalRule}
                               />
                             </form>
                           ) : (
@@ -2372,11 +2482,12 @@ export function Calendae() {
                                       event.kind === "posicao" ? "mensal" : event.kind ?? null,
                                     );
                                     setDraftEveryDays(event.everyDays ? String(event.everyDays) : "");
-                                    setDraftMonthSide(event.monthSide ?? (event.kind === "mensal" ? "primeiros" : ""));
+                                    setDraftMonthSide(event.monthSide ?? "");
                                     setDraftMonthNth(
                                       event.monthNth && event.monthNth > 0 ? String(event.monthNth) : "",
                                     );
                                     setDraftMonthUtil(Boolean(event.monthUtil));
+                                    setDraftIntervalRule(event.intervalRule ?? "ignorar");
                                     setDraftDurTime(
                                       event.durationMinutes ? minutesToTime(event.durationMinutes) : "",
                                     );
@@ -2437,6 +2548,7 @@ export function Calendae() {
               setOpenBirthdayId((cur) => (cur === event.id ? null : event.id));
               setOpenEventId(null);
               setOpenHolidayIso(null);
+    setOpenHighlightId(null);
           
               setOpenBenefitId(null);
               setOpenHistoryId(null);
@@ -2464,8 +2576,10 @@ export function Calendae() {
             bills={bills}
             boletos={boletos}
             irpf={irpfEvent}
+            irpfOn={settings.irpfOn}
+            onIrpf={(irpfOn) => setSettings((prev) => ({ ...prev, irpfOn }))}
             irpfLots={irpfLots}
-            irpfOpen={openIrpfId === irpfEvent.id}
+            irpfOpen={Boolean(irpfEvent && openIrpfId === irpfEvent.id)}
             pis={pis}
             pisOpen={Boolean(pis && openPisId === pis.id)}
             laborMonth={laborMonth}
@@ -2494,6 +2608,7 @@ export function Calendae() {
               }
               setOpenEventId(null);
               setOpenHolidayIso(null);
+    setOpenHighlightId(null);
               setOpenBirthdayId(null);
               setOpenBenefitId(null);
               setOpenHistoryId(null);
@@ -2523,6 +2638,7 @@ export function Calendae() {
               }
               setOpenEventId(null);
               setOpenHolidayIso(null);
+    setOpenHighlightId(null);
               setOpenBirthdayId(null);
               setOpenBenefitId(null);
               setOpenHistoryId(null);
@@ -2545,6 +2661,7 @@ export function Calendae() {
               }
               setOpenEventId(null);
               setOpenHolidayIso(null);
+    setOpenHighlightId(null);
               setOpenBirthdayId(null);
               setOpenBenefitId(null);
               setOpenHistoryId(null);
@@ -2597,6 +2714,7 @@ export function Calendae() {
               setOpenBenefitId((cur) => (cur === event.id ? null : event.id));
               setOpenEventId(null);
               setOpenHolidayIso(null);
+    setOpenHighlightId(null);
           
               setOpenBirthdayId(null);
               setOpenHistoryId(null);
@@ -2614,6 +2732,7 @@ export function Calendae() {
               setOpenBillId((cur) => (cur === event.id ? null : event.id));
               setOpenEventId(null);
               setOpenHolidayIso(null);
+    setOpenHighlightId(null);
               setOpenBirthdayId(null);
               setOpenBenefitId(null);
               setOpenHistoryId(null);
@@ -2635,6 +2754,7 @@ export function Calendae() {
               }
               setOpenEventId(null);
               setOpenHolidayIso(null);
+    setOpenHighlightId(null);
               setOpenBirthdayId(null);
               setOpenBenefitId(null);
               setOpenHistoryId(null);
@@ -2660,6 +2780,7 @@ export function Calendae() {
               }
               setOpenEventId(null);
               setOpenHolidayIso(null);
+    setOpenHighlightId(null);
               setOpenBirthdayId(null);
               setOpenBenefitId(null);
               setOpenHistoryId(null);
@@ -2681,6 +2802,7 @@ export function Calendae() {
               }
               setOpenEventId(null);
               setOpenHolidayIso(null);
+    setOpenHighlightId(null);
               setOpenBirthdayId(null);
               setOpenBenefitId(null);
               setOpenHistoryId(null);
@@ -2704,6 +2826,7 @@ export function Calendae() {
               }
               setOpenEventId(null);
               setOpenHolidayIso(null);
+    setOpenHighlightId(null);
               setOpenBirthdayId(null);
               setOpenBenefitId(null);
               setOpenHistoryId(null);
@@ -2721,6 +2844,7 @@ export function Calendae() {
           {settings.tabs.history ? (
           <HistoryTab
             events={history}
+            hourCycle={settings.hourCycle}
             openId={openHistoryId}
             onOpen={(event) => {
               const date = fromIso(event.iso);
@@ -2729,6 +2853,7 @@ export function Calendae() {
               setOpenHistoryId((cur) => (cur === event.id ? null : event.id));
               setOpenEventId(null);
               setOpenHolidayIso(null);
+    setOpenHighlightId(null);
           
               setOpenBirthdayId(null);
               setOpenBenefitId(null);
@@ -2845,10 +2970,12 @@ export function Calendae() {
               saturdayTint={settings.saturdayTint}
               sundayTint={settings.sundayTint}
               holidayTint={settings.holidayTint}
+              hourCycle={settings.hourCycle}
               onWeekStart={(weekStart) => setSettings((prev) => ({ ...prev, weekStart }))}
               onSaturdayTint={(saturdayTint) => setSettings((prev) => ({ ...prev, saturdayTint }))}
               onSundayTint={(sundayTint) => setSettings((prev) => ({ ...prev, sundayTint }))}
               onHolidayTint={(holidayTint) => setSettings((prev) => ({ ...prev, holidayTint }))}
+              onHourCycle={(hourCycle) => setSettings((prev) => ({ ...prev, hourCycle }))}
               tabs={settings.tabs}
               onToggleTab={(id, next) =>
                 setSettings((prev) => ({ ...prev, tabs: { ...prev.tabs, [id]: next } }))
@@ -2876,6 +3003,7 @@ export function Calendae() {
                       [...localEvents, ...googleEvents].filter((event) =>
                         tabAllowsEvent(settings.tabs, event),
                       ),
+                      settings.hourCycle,
                     );
                   })
                   .finally(() => setRemindersBusy(false));

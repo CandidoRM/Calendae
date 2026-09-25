@@ -1,4 +1,4 @@
-import { formatTime, fromIso, isDueForHistory, ordinalIso, takeLocal, todayIso, toIso, usesOrdinal, type CalEvent } from "@/lib/calendar";
+import { formatTime, fromIso, isDueForHistory, ordinalIso, takeLocal, todayIso, toIso, usesOrdinal, type CalEvent, type HourCycle } from "@/lib/calendar";
 
 const FIRED_KEY = "calendae-reminders-fired";
 const LEGACY_FIRED_KEY = "almanaque-reminders-fired";
@@ -141,7 +141,7 @@ export function stopReminders() {
   }
 }
 
-export function startReminders(events: CalEvent[]) {
+export function startReminders(events: CalEvent[], cycle: HourCycle = "12") {
   stopReminders();
   if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
 
@@ -169,7 +169,7 @@ export function startReminders(events: CalEvent[]) {
           markFired(key);
           void showNotice(
             event.title,
-            [event.kind ? `(${event.kind})` : "", formatTime(event.time)].filter(Boolean).join(" "),
+            [event.kind ? `(${event.kind})` : "", formatTime(event.time, cycle)].filter(Boolean).join(" "),
           );
         }
         continue;
@@ -179,7 +179,7 @@ export function startReminders(events: CalEvent[]) {
         markFired(key);
         void showNotice(
           event.title,
-          [event.kind ? `(${event.kind})` : "", formatTime(event.time)].filter(Boolean).join(" "),
+          [event.kind ? `(${event.kind})` : "", formatTime(event.time, cycle)].filter(Boolean).join(" "),
         );
       }, wait);
       timers.push(id);

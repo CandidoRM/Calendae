@@ -776,7 +776,6 @@ export function Almanaque() {
             extras={extraHolidays}
             municipal={settings.municipal}
             commemorative={settings.commemorative}
-            elections={settings.elections}
             cityName={settings.cityName}
             cityUf={settings.cityUf}
             cityIbge={settings.cityIbge}
@@ -785,9 +784,6 @@ export function Almanaque() {
             }}
             onToggleCommemorative={(on) => {
               setSettings((prev) => ({ ...prev, commemorative: on }));
-            }}
-            onToggleElections={(on) => {
-              setSettings((prev) => ({ ...prev, elections: on }));
             }}
             onSearchCity={async (query, uf) => {
               const { searchMunicipio } = await import("@/lib/calendar-server");
