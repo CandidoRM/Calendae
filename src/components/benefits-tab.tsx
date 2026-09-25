@@ -2,6 +2,7 @@ import { Pencil, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { CalendarGlyph, useGlyphFlash } from "@/components/calendar-glyph";
+import { HeaderMenu } from "@/components/header-menu";
 import { A11yHint } from "@/components/a11y-hint";
 import { MONTHS, fromIso, newEventId, type CalEvent } from "@/lib/calendar";
 import { thirteenthMonths } from "@/lib/almanac";
@@ -30,10 +31,6 @@ const BRACKETS: { value: InssBracket; label: string }[] = [
   { value: "acima", label: "acima de um salário mínimo" },
 ];
 
-function KindMark({ on }: { on: boolean }) {
-  return <span aria-hidden="true" className={cn("cal-kind", on && "is-on")} />;
-}
-
 function FaixaPick({
   value,
   onChange,
@@ -41,23 +38,26 @@ function FaixaPick({
   value: InssBracket;
   onChange: (value: InssBracket) => void;
 }) {
+  const [open, setOpen] = useState(false);
   return (
-    <div className="flex flex-col gap-1">
-      {BRACKETS.map((item) => {
-        const on = value === item.value;
-        return (
-          <button
-            key={item.value}
-            type="button"
-            aria-pressed={on}
-            className="flex h-9 items-center gap-3 text-left text-sm"
-            onClick={() => onChange(item.value)}
-          >
-            <KindMark on={on} />
-            {item.label}
-          </button>
-        );
-      })}
+    <div className="cal-kind-pick is-long flex items-center gap-2">
+      <HeaderMenu
+        label="Faixa do INSS"
+        value={value}
+        options={BRACKETS}
+        open={open}
+        wide
+        fixed
+        soft
+        buttonClassName="cal-kind-btn"
+        optionClassName="cal-kind-option"
+        onOpen={() => setOpen(true)}
+        onClose={() => setOpen(false)}
+        onPick={(next) => {
+          onChange(next);
+          setOpen(false);
+        }}
+      />
     </div>
   );
 }
@@ -97,7 +97,6 @@ export function BenefitsTab({
   const [especie, setEspecie] = useState("");
   const [name, setName] = useState("");
   const [bracket, setBracket] = useState<InssBracket>("minimo");
-  const [thirteenth, setThirteenth] = useState(true);
   const draftIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -110,12 +109,10 @@ export function BenefitsTab({
     setEspecie("");
     setName("");
     setBracket("minimo");
-    setThirteenth(true);
     draftIdRef.current = null;
   }, [adding, editingId]);
 
   const parsed = parseNb(nb);
-  const bpc = isBpcEspecie(especie);
   const previewIso = parsed ? inssCompetencePay(year, month, parsed.digit, bracket) : null;
 
   const visible = benefits
@@ -127,7 +124,7 @@ export function BenefitsTab({
       const iso = inssPayIso(year, month, digit, eventBracket);
       const rows: { event: CalEvent; iso: string; digit: number; tag: string | null }[] = [];
       if (iso) rows.push({ event, iso, digit, tag: null });
-      if (event.thirteenth && !isBpcEspecie(event.especie ?? "")) {
+      if (!isBpcEspecie(event.especie ?? "")) {
         for (const extra of inssThirteenth(year, digit, eventBracket, thirteenthMonths(year))) {
           const date = fromIso(extra.iso);
           if (date.getFullYear() === year && date.getMonth() === month) {
@@ -144,7 +141,6 @@ export function BenefitsTab({
     setEspecie("");
     setName("");
     setBracket("minimo");
-    setThirteenth(true);
     setEditingId(null);
     draftIdRef.current = null;
   }
@@ -154,13 +150,11 @@ export function BenefitsTab({
     especie?: string;
     name?: string;
     bracket?: InssBracket;
-    thirteenth?: boolean;
   }) {
     const nbVal = next.nb ?? nb;
     const espVal = next.especie ?? especie;
     const nameVal = next.name ?? name;
     const bracketVal = next.bracket ?? bracket;
-    const thirteenthVal = next.thirteenth ?? thirteenth;
     const parsedNb = parseNb(nbVal);
     const digits = parsedNb?.digits.replace(/\D/g, "") ?? "";
     const ready = Boolean(parsedNb && (digits.length >= 10 || nbVal.includes("-")));
@@ -186,7 +180,7 @@ export function BenefitsTab({
       nb: parsedNb.digits,
       especie: espVal.trim() || undefined,
       bracket: bracketVal,
-      thirteenth: thirteenthVal && !bpcNow,
+      thirteenth: !bpcNow,
       kind: "mensal" as const,
       source: "benefit" as const,
     };
@@ -215,20 +209,11 @@ export function BenefitsTab({
           value={especie}
           onChange={(event) => {
             const parsedField = parseEspecieField(event.target.value);
-            const wasBpc = isBpcEspecie(especie);
             setEspecie(parsedField.especie);
             if (parsedField.nb) setNb(parsedField.nb);
-            const nextThirteenth = isBpcEspecie(parsedField.especie)
-              ? false
-              : wasBpc
-                ? true
-                : thirteenth;
-            if (isBpcEspecie(parsedField.especie)) setThirteenth(false);
-            else if (wasBpc) setThirteenth(true);
             persist({
               especie: parsedField.especie,
               nb: parsedField.nb || undefined,
-              thirteenth: nextThirteenth,
             });
           }}
           placeholder="B21"
@@ -244,24 +229,11 @@ export function BenefitsTab({
           value={nb}
           onChange={(event) => {
             const parsedField = parseNbField(event.target.value);
-            if (parsedField.especie != null) {
-              const wasBpc = isBpcEspecie(especie);
-              setEspecie(parsedField.especie);
-              if (isBpcEspecie(parsedField.especie)) setThirteenth(false);
-              else if (wasBpc) setThirteenth(true);
-            }
+            if (parsedField.especie != null) setEspecie(parsedField.especie);
             setNb(parsedField.nb);
             persist({
               nb: parsedField.nb,
               especie: parsedField.especie ?? undefined,
-              thirteenth:
-                parsedField.especie != null
-                  ? isBpcEspecie(parsedField.especie)
-                    ? false
-                    : isBpcEspecie(especie)
-                      ? true
-                      : thirteenth
-                  : undefined,
             });
           }}
           placeholder="NB"
@@ -288,29 +260,15 @@ export function BenefitsTab({
           persist({ bracket: value });
         }}
       />
-      <button
-        type="button"
-        aria-pressed={thirteenth && !bpc}
-        disabled={bpc}
-        className="flex h-9 items-center gap-3 text-left text-sm disabled:opacity-45"
-        onClick={() => {
-          if (bpc) return;
-          const next = !thirteenth;
-          setThirteenth(next);
-          persist({ thirteenth: next });
-        }}
-      >
-        <KindMark on={thirteenth && !bpc} />
-        décimo terceiro
-      </button>
       {hint ? <p className="text-xs text-muted">{hint}</p> : null}
     </>
   );
 
   const body = (
     <>
+      {framed || adding ? (
       <div className="cal-tab-head">
-        <h2 className={framed ? "cal-tab-title" : "text-sm font-medium text-fg"}>Recebimentos</h2>
+        <h2 className={framed ? "cal-tab-title" : "translate-y-3 text-sm font-medium text-fg"}>INSS</h2>
         {framed ? (
           <Button
             variant="ghost"
@@ -327,15 +285,12 @@ export function BenefitsTab({
           </Button>
         ) : null}
       </div>
+      ) : null}
       {framed ? <A11yHint>Dia em que o benefício do INSS cai na conta.</A11yHint> : null}
       {adding ? (
         <div className="mt-3 flex flex-col gap-2 border-t border-line pt-3">{formFields}</div>
       ) : null}
-      {visible.length === 0 && !adding ? (
-        <p className="mt-3 border-t border-line pt-3 text-pretty text-sm text-muted">
-          Nenhum recebimento neste mês.
-        </p>
-      ) : (
+      {visible.length === 0 ? null : (
         <ul className="cal-ruled mt-1">
           {visible.map(({ event, iso, digit, tag }) => {
             const open = openId === event.id;
@@ -417,9 +372,6 @@ export function BenefitsTab({
                               : event.title,
                           );
                           setBracket(event.bracket ?? "minimo");
-                          setThirteenth(
-                            !isBpcEspecie(event.especie ?? "") && event.thirteenth !== false,
-                          );
                         }}
                       >
                         <Pencil className="size-4" />

@@ -73,6 +73,8 @@
   --c-election: #085388;
   --c-election-wash: color-mix(in oklab, #c5d0f5 50%, transparent);
   --c-election-wash-on: #b4c0ee;
+  --c-ir: #1f6b5a;
+  --c-ir-wash: color-mix(in oklab, #1f6b5a 14%, transparent);
   --c-commemorative: #a27f5f;
   --c-commemorative-edge: #6a4e38;
   --c-select-edge: #0c2415;
@@ -184,6 +186,63 @@
   transform: translateY(-4px);
 }
 
+.cal-year-type {
+  display: inline-flex;
+  align-items: flex-end;
+  width: 4.6ch;
+  padding-right: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cal-year-seg {
+  width: 4ch;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  caret-color: var(--c-fg);
+  cursor: pointer;
+  border-radius: 2px;
+  background-color: transparent;
+  transition: background-color 0.5s ease;
+}
+
+.cal-year-seg::selection,
+.cal-year-type ::selection {
+  background: color-mix(in oklab, var(--c-accent) 58%, transparent);
+  color: inherit;
+}
+
+.cal-year-seg::-moz-selection,
+.cal-year-type ::-moz-selection {
+  background: color-mix(in oklab, var(--c-accent) 58%, transparent);
+  color: inherit;
+}
+
+@keyframes cal-year-flash {
+  0% {
+    color: #7c4a28;
+  }
+  100% {
+    color: #fff;
+  }
+}
+
+.cal-year-type.is-flash .cal-year-seg {
+  animation: cal-year-flash 1.25s ease forwards;
+}
+
+.cal-year-type.is-pick .cal-year-seg {
+  background-color: color-mix(in oklab, var(--c-accent) 58%, transparent);
+  color: #fff;
+}
+
+.cal-year-type::-webkit-outer-spin-button,
+.cal-year-type::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
 .cal-week-btn {
   border: none;
   background: transparent;
@@ -213,6 +272,41 @@
 
 .cal-kind-pick .cal-pick-menu.is-wide {
   width: var(--cal-field);
+}
+
+.cal-kind-pick.is-long .cal-kind-btn,
+.cal-kind-pick.is-long .cal-pick-menu.is-wide {
+  width: 13.5rem;
+  white-space: nowrap;
+}
+
+.cal-kind-pick.is-fill {
+  width: 100%;
+}
+
+.cal-kind-pick.is-fill > * {
+  display: block;
+  width: 100%;
+}
+
+.cal-kind-pick.is-fill .cal-kind-btn {
+  width: 100%;
+}
+
+.cal-kind-pick.is-uf {
+  width: 4rem;
+  flex-shrink: 0;
+}
+
+.cal-kind-pick.is-uf > * {
+  width: 4rem;
+}
+
+.cal-kind-pick.is-uf .cal-kind-btn {
+  width: 4rem;
+  padding-inline: 0;
+  text-align: center;
+  text-transform: uppercase;
 }
 
 .cal-pick-menu.is-fixed {
@@ -599,6 +693,15 @@
 
 .cal-cell.nm-bill {
   color: var(--c-bill);
+}
+
+.cal-cell.nm-ir {
+  color: var(--c-ir);
+}
+
+.cal-cell.is-selected.nm-ir.sq-none {
+  background: var(--c-ir-wash);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--c-ir) 72%, #000);
 }
 
 .cal-cell.is-selected.nm-bill.sq-none {
@@ -1184,6 +1287,11 @@
 .cal-app.a11y-sat .cal-month-grid .cal-cell.nm-election,
 .cal-app.a11y-sat .cal-month-grid .cal-cell.nm-election .cal-num {
   color: #0000ff;
+}
+
+.cal-app.a11y-sat .cal-month-grid .cal-cell.nm-ir,
+.cal-app.a11y-sat .cal-month-grid .cal-cell.nm-ir .cal-num {
+  color: #007a55;
 }
 
 .cal-app.a11y-sat .cal-month-grid .cal-cell.sq-today {

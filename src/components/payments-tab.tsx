@@ -1,5 +1,5 @@
 import { Pencil, Trash2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useGlyphFlash } from "@/components/calendar-glyph";
 import { A11yHint } from "@/components/a11y-hint";
 import { MONTHS, fromIso, occurrenceInMonth, type CalEvent } from "@/lib/calendar";
@@ -18,6 +18,8 @@ type PaymentsTabProps = {
   onOpen: (event: CalEvent, iso: string) => void;
   framed?: boolean;
   adding?: boolean;
+  afterName?: ReactNode;
+  extra?: ReactNode;
 };
 
 export function PaymentsTab({
@@ -33,6 +35,8 @@ export function PaymentsTab({
   onOpen,
   framed = true,
   adding = false,
+  afterName = null,
+  extra = null,
 }: PaymentsTabProps) {
   const [glyphFlash, pingGlyph] = useGlyphFlash();
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -94,9 +98,11 @@ export function PaymentsTab({
 
   const body = (
     <>
+      {framed || adding ? (
       <div className="cal-tab-head">
-        <h2 className={framed ? "cal-tab-title" : "text-sm font-medium text-fg"}>Pagamentos</h2>
+        <h2 className={framed ? "cal-tab-title" : "translate-y-1/2 text-sm font-medium text-fg"}>Pagamentos</h2>
       </div>
+      ) : null}
       {framed ? <A11yHint>Contas a pagar no mês. Repetem sozinhas no mês seguinte.</A11yHint> : null}
       {adding ? (
       <div className="mt-3 flex flex-col gap-2 border-t border-line pt-3">
@@ -112,13 +118,11 @@ export function PaymentsTab({
           placeholder="Nome"
           className="h-11 rounded-xl bg-bg px-3 text-sm text-fg shadow-[0_0_0_1px_var(--c-line)] outline-none placeholder:text-muted"
         />
+        {afterName}
       </div>
       ) : null}
-      {visible.length === 0 && !adding ? (
-        <p className="mt-3 border-t border-line pt-3 text-pretty text-sm text-muted">
-          Nenhum pagamento neste mês.
-        </p>
-      ) : (
+      {extra}
+      {visible.length === 0 ? null : (
         <ul className="cal-ruled mt-1">
           {visible.map(({ event, iso }) => {
             const day = fromIso(iso).getDate();

@@ -4,6 +4,9 @@ import { ConnectorType, GoogleCalendarTools } from "@/lib/app-data";
 import { fallbackHolidays, facultativeName, parseGoogleEvents, type CalEvent } from "@/lib/calendar";
 import { KNOWN_SECOND_ROUND_FEDERAL } from "@/lib/elections";
 import { tsePresidentSecondRound } from "@/lib/elections-tse";
+import { CONFIRMED_FGTS, parseFgtsCalendar } from "@/lib/fgts";
+import { CONFIRMED_IRPF, CONFIRMED_IRPF_LOTS, parseIrpfDeadline, parseIrpfLots } from "@/lib/irpf";
+import { CONFIRMED_PIS, parsePisCalendar, standingPisMap } from "@/lib/pis";
 import type { InssYearTable } from "@/lib/inss";
 
 export type GoogleMonthResult = {
@@ -21,7 +24,7 @@ export type HolidayFetch = {
 };
 
 export const getHolidays = createServerFn({ method: "GET" })
-  .validator(z.object({ year: z.number().int().min(2000).max(2100) }))
+  .validator(z.object({ year: z.number().int().min(1).max(9999) }))
   .handler(async ({ data }): Promise<HolidayFetch> => {
     try {
       const res = await fetch(`https://brasilapi.com.br/api/feriados/v1/${data.year}`, {
@@ -58,7 +61,7 @@ export const getHolidays = createServerFn({ method: "GET" })
   });
 
 export const confirmElectionSecondRound = createServerFn({ method: "GET" })
-  .validator(z.object({ year: z.number().int().min(2000).max(2100) }))
+  .validator(z.object({ year: z.number().int().min(1).max(9999) }))
   .handler(async ({ data }): Promise<{ confirmed: boolean; source?: "tse" | "wiki" | "known" }> => {
     if (data.year % 4 !== 2) return { confirmed: false };
     if (KNOWN_SECOND_ROUND_FEDERAL.has(data.year)) return { confirmed: true, source: "known" };
@@ -105,6 +108,135 @@ export const confirmElectionSecondRound = createServerFn({ method: "GET" })
     } catch {
       return { confirmed: false };
     }
+  });
+
+export const confirmIrpfDeadline = createServerFn({ method: "GET" })
+  .validator(z.object({ year: z.number().int().min(1).max(9999) }))
+  .handler(async ({ data }): Promise<{
+    iso: string | null;
+    confirmed: boolean;
+    source?: "known" | "receita" | "wiki";
+    lots: { n: number; iso: string; confirmed: boolean }[];
+  }> => {
+    const known = CONFIRMED_IRPF[data.year];
+    const knownLots = CONFIRMED_IRPF_LOTS[data.year] ?? [];
+
+    async function lotsFromReceita(): Promise<string[]> {
+      const res = await fetch(
+        `https://www.gov.br/receitafederal/pt-br/assuntos/meu-imposto-de-renda/restituicao/lotes/${data.year}`,
+        { signal: AbortSignal.timeout(3500) },
+      );
+      if (!res.ok) return [];
+      return parseIrpfLots(await res.text(), data.year);
+    }
+
+    let liveLots: string[] = [];
+    try {
+      liveLots = await lotsFromReceita();
+    } catch {
+      liveLots = [];
+    }
+    const lotIsos = liveLots.length ? liveLots : knownLots;
+    const lots = lotIsos.map((iso, i) => ({
+      n: i + 1,
+      iso,
+      confirmed: liveLots.length > 0 || knownLots.length > 0,
+    }));
+
+    if (known) return { iso: known, confirmed: true, source: "known", lots };
+
+    async function fromUrl(url: string): Promise<string | null> {
+      const res = await fetch(url, { signal: AbortSignal.timeout(3500) });
+      if (!res.ok) return null;
+      return parseIrpfDeadline(await res.text(), data.year);
+    }
+
+    try {
+      const receita = await fromUrl("https://www.gov.br/receitafederal/pt-br/assuntos/meu-imposto-de-renda");
+      if (receita) return { iso: receita, confirmed: true, source: "receita", lots };
+    } catch {
+      /* still try wiki */
+    }
+
+    try {
+      const title = `Imposto_de_Renda_${data.year}`;
+      const res = await fetch(`https://pt.wikipedia.org/api/rest_v1/page/summary/${title}`, {
+        signal: AbortSignal.timeout(2500),
+      });
+      if (res.ok) {
+        const json: unknown = await res.json();
+        const extract =
+          typeof json === "object" && json && "extract" in json && typeof json.extract === "string"
+            ? json.extract
+            : "";
+        const iso = parseIrpfDeadline(extract, data.year);
+        if (iso) return { iso, confirmed: true, source: "wiki", lots };
+      }
+    } catch {
+      /* unpublished cycle */
+    }
+    return { iso: null, confirmed: false, lots };
+  });
+
+export const confirmLaborYear = createServerFn({ method: "GET" })
+  .validator(z.object({ year: z.number().int().min(1).max(9999) }))
+  .handler(async ({ data }): Promise<{
+    pis: { byMonth: Record<number, string>; confirmed: boolean; source: "known" | "codefat" | "wiki" } | null;
+    fgts:
+      | { byMonth: Record<number, { iso: string; until: string }>; confirmed: boolean; source: "known" | "caixa" | "wiki" }
+      | null;
+  }> => {
+    async function pageText(url: string, ms: number): Promise<string> {
+      const res = await fetch(url, { signal: AbortSignal.timeout(ms) });
+      if (!res.ok) return "";
+      return res.text();
+    }
+
+    async function wikiHtml(title: string): Promise<string> {
+      const url = `https://pt.wikipedia.org/api/rest_v1/page/html/${title}`;
+      return pageText(url, 3500);
+    }
+
+    let pis: {
+      byMonth: Record<number, string>;
+      confirmed: boolean;
+      source: "known" | "codefat" | "wiki";
+    } | null = CONFIRMED_PIS[data.year]
+      ? { byMonth: CONFIRMED_PIS[data.year], confirmed: true, source: "known" }
+      : data.year >= 2026
+        ? { byMonth: standingPisMap(data.year), confirmed: true, source: "codefat" }
+        : null;
+
+    let fgts: {
+      byMonth: Record<number, { iso: string; until: string }>;
+      confirmed: boolean;
+      source: "known" | "caixa" | "wiki";
+    } | null = CONFIRMED_FGTS[data.year]
+      ? { byMonth: CONFIRMED_FGTS[data.year], confirmed: true, source: "known" }
+      : null;
+
+    try {
+      const [abono, pisPage] = await Promise.all([
+        wikiHtml("Abono_salarial"),
+        wikiHtml(`Abono_salarial_${data.year}`),
+      ]);
+      const parsed = parsePisCalendar(`${abono}\n${pisPage}`, data.year);
+      if (parsed) pis = { byMonth: parsed, confirmed: true, source: "wiki" };
+    } catch {
+      /* standing / known keeps */
+    }
+
+    if (!fgts) {
+      try {
+        const html = await wikiHtml("Saque-anivers%C3%A1rio");
+        const parsed = parseFgtsCalendar(html, data.year);
+        if (parsed) fgts = { byMonth: parsed, confirmed: true, source: "wiki" };
+      } catch {
+        /* stays previsto */
+      }
+    }
+
+    return { pis, fgts };
   });
 
 export const getGoogleMonth = createServerFn({ method: "POST" })
@@ -277,7 +409,7 @@ export const locateMunicipio = createServerFn({ method: "GET" })
 export const getMunicipalHolidays = createServerFn({ method: "GET" })
   .validator(
     z.object({
-      year: z.number().int().min(2000).max(2100),
+      year: z.number().int().min(1).max(9999),
       ibge: z.number().int(),
       city: z.string().min(1).max(80),
       uf: z.string().max(2).optional(),
@@ -392,7 +524,7 @@ function parseInssHtml(html: string, year: number): InssYearTable | null {
 export type InssFetch = { table: InssYearTable | null; live: boolean };
 
 export const getInssCalendar = createServerFn({ method: "GET" })
-  .validator(z.object({ year: z.number().int().min(2000).max(2100) }))
+  .validator(z.object({ year: z.number().int().min(1).max(9999) }))
   .handler(async ({ data }): Promise<InssFetch> => {
     const year = data.year;
     const urls = [

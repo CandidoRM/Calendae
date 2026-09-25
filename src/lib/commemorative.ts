@@ -1,10 +1,10 @@
-import { easterDate, toIso, type CalEvent } from "@/lib/calendar";
+import { civilDate, easterDate, toIso, type CalEvent } from "@/lib/calendar";
 import { worldCupDates } from "@/lib/world-cup";
 
 function nthWeekday(year: number, month: number, weekday: number, nth: number): string {
-  const first = new Date(year, month, 1);
+  const first = civilDate(year, month, 1);
   const shift = (weekday - first.getDay() + 7) % 7;
-  return toIso(new Date(year, month, 1 + shift + (nth - 1) * 7));
+  return toIso(civilDate(year, month, 1 + shift + (nth - 1) * 7));
 }
 
 export function commemorativeDates(year: number): CalEvent[] {

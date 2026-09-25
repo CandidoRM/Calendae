@@ -485,7 +485,7 @@ export function Almanaque() {
   }, [hydrated, localEvents, googleEvents]);
 
   const monthOptions = MONTHS.map((name, index) => ({ value: index, label: name }));
-  const yearOptions = Array.from({ length: 51 }, (_, i) => {
+  const yearOptions = Array.from({ length: 101 }, (_, i) => {
     const item = 2000 + i;
     return { value: item, label: String(item) };
   });

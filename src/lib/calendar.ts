@@ -1,5 +1,5 @@
 export type EventKind = "semanal" | "mensal" | "semestral" | "anual" | "personalizado" | "posicao";
-export type EventSource = "local" | "holiday" | "google" | "birthday" | "benefit" | "bill" | "period";
+export type EventSource = "local" | "holiday" | "google" | "birthday" | "benefit" | "bill" | "boleto" | "period" | "irpf" | "pis" | "ipva" | "fgts" | "bolsa" | "gas" | "licenca";
 export type HolidayKind = "national" | "municipal" | "commemorative" | "election" | "facultative";
 export type MonthSide = "primeiros" | "ultimos";
 
@@ -24,6 +24,8 @@ export type CalEvent = {
   especie?: string;
   bracket?: "minimo" | "acima";
   thirteenth?: boolean;
+  confirmed?: boolean;
+  amount?: string;
 };
 
 export type CalCell = {
@@ -85,6 +87,20 @@ export type Settings = {
   a11ySaturated: boolean;
   a11yColorblind: boolean;
   a11yHints: boolean;
+  pisBirthMonth: number | null;
+  fgtsBirthMonth: number | null;
+  laborMonth: number | null;
+  pisOn: boolean;
+  fgtsOn: boolean;
+  laborTriedYear: number | null;
+  bolsaNis: string;
+  bolsaOn: boolean;
+  gasOn: boolean;
+  ipvaUf: string;
+  ipvaPlate: string;
+  ipvaDigit: number | null;
+  ipvaOn: boolean;
+  licencaOn: boolean;
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -113,6 +129,20 @@ export const DEFAULT_SETTINGS: Settings = {
   a11ySaturated: false,
   a11yColorblind: false,
   a11yHints: false,
+  pisBirthMonth: null,
+  fgtsBirthMonth: null,
+  laborMonth: null,
+  pisOn: false,
+  fgtsOn: false,
+  laborTriedYear: null,
+  bolsaNis: "",
+  bolsaOn: false,
+  gasOn: false,
+  ipvaUf: "",
+  ipvaPlate: "",
+  ipvaDigit: null,
+  ipvaOn: false,
+  licencaOn: false,
 };
 
 export const EVENT_KINDS = ["semanal", "mensal", "semestral", "anual", "personalizado"] as const;
@@ -150,6 +180,16 @@ export const WEEKDAYS = [
 ] as const;
 
 export const SETTINGS_KEY = "calendae-settings";
+export const YEAR_MIN = 1;
+export const YEAR_MAX = 9999;
+
+/** JS trata 0–99 como 1900–1999. setFullYear evita isso. */
+export function civilDate(year: number, monthIndex: number, day = 1): Date {
+  const date = new Date(0);
+  date.setFullYear(year, monthIndex, day);
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
 export const EVENTS_KEY = "calendae-events";
 export const HOLIDAYS_KEY = "calendae-holidays";
 export const PERIODS_KEY = "calendae-periods";
@@ -217,7 +257,7 @@ export function toIso(date: Date): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
   const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+  return `${String(y).padStart(4, "0")}-${m}-${d}`;
 }
 
 export function todayIso(): string {
@@ -233,11 +273,11 @@ export function todayIso(): string {
 
 export function fromIso(iso: string): Date {
   const [y, m, d] = iso.split("-").map(Number);
-  return new Date(y, m - 1, d);
+  return civilDate(y, m - 1, d);
 }
 
 export function shiftMonth(anchor: Date, delta: number): Date {
-  return new Date(anchor.getFullYear(), anchor.getMonth() + delta, 1);
+  return civilDate(anchor.getFullYear(), anchor.getMonth() + delta, 1);
 }
 
 export function weekdayName(iso: string): string {
@@ -257,7 +297,7 @@ export function formatTime(time?: string): string {
 }
 
 export function shiftDays(date: Date, days: number): Date {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
+  return civilDate(date.getFullYear(), date.getMonth(), date.getDate() + days);
 }
 
 export function expandPeriod(period: Period): string[] {
@@ -328,7 +368,7 @@ export function formatHolidaySync(cache: HolidayYearCache | undefined): string {
 }
 
 function lastDayOfMonth(year: number, month: number): number {
-  return new Date(year, month + 1, 0).getDate();
+  return civilDate(year, month + 1, 0).getDate();
 }
 
 function isEveryNMonths(start: Date, date: Date, every: number): boolean {
@@ -357,7 +397,7 @@ function offAround(year: number): Set<string> {
 }
 
 function mondayOf(date: Date): Date {
-  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const start = civilDate(date.getFullYear(), date.getMonth(), date.getDate());
   const weekDay = start.getDay();
   start.setDate(start.getDate() - (weekDay === 0 ? 6 : weekDay - 1));
   return start;
@@ -366,7 +406,7 @@ function mondayOf(date: Date): Date {
 function collectDays(start: Date, count: number, util: boolean, off: Set<string>): string[] {
   const days: string[] = [];
   for (let i = 0; i < count; i += 1) {
-    const date = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+    const date = civilDate(start.getFullYear(), start.getMonth(), start.getDate() + i);
     const iso = toIso(date);
     if (util && (!isUtilDay(date) || off.has(iso))) continue;
     days.push(iso);
@@ -400,15 +440,15 @@ export function ordinalIso(event: CalEvent, inDate: Date): string | null {
     days = collectDays(mondayOf(inDate), 7, util, off);
   } else if (event.kind === "mensal" || event.kind === "posicao") {
     const month = inDate.getMonth();
-    days = collectDays(new Date(year, month, 1), lastDayOfMonth(year, month), util, off);
+    days = collectDays(civilDate(year, month, 1), lastDayOfMonth(year, month), util, off);
   } else if (event.kind === "semestral") {
     const startMonth = inDate.getMonth() < 6 ? 0 : 6;
-    const start = new Date(year, startMonth, 1);
-    const end = new Date(year, startMonth + 6, 0);
+    const start = civilDate(year, startMonth, 1);
+    const end = civilDate(year, startMonth + 6, 0);
     const count = Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;
     days = collectDays(start, count, util, off);
   } else if (event.kind === "anual") {
-    days = collectDays(new Date(year, 0, 1), yearLength(year), util, off);
+    days = collectDays(civilDate(year, 0, 1), yearLength(year), util, off);
   } else {
     return null;
   }
@@ -418,20 +458,20 @@ export function ordinalIso(event: CalEvent, inDate: Date): string | null {
 }
 
 export function nthMonthIso(event: CalEvent, year: number, month: number): string | null {
-  return ordinalIso({ ...event, kind: event.kind ?? "mensal" }, new Date(year, month, 1));
+  return ordinalIso({ ...event, kind: event.kind ?? "mensal" }, civilDate(year, month, 1));
 }
 
 function shiftByKind(date: Date, event: CalEvent): Date {
   if (event.kind === "semanal") {
-    return new Date(date.getFullYear(), date.getMonth(), date.getDate() + 7);
+    return civilDate(date.getFullYear(), date.getMonth(), date.getDate() + 7);
   }
   if (event.kind === "personalizado") {
     const step = event.everyDays && event.everyDays > 0 ? event.everyDays : 1;
-    return new Date(date.getFullYear(), date.getMonth(), date.getDate() + step);
+    return civilDate(date.getFullYear(), date.getMonth(), date.getDate() + step);
   }
   const months = event.kind === "semestral" ? 6 : event.kind === "anual" ? 12 : 1;
   const day = date.getDate();
-  const next = new Date(date.getFullYear(), date.getMonth() + months, 1);
+  const next = civilDate(date.getFullYear(), date.getMonth() + months, 1);
   next.setDate(Math.min(day, lastDayOfMonth(next.getFullYear(), next.getMonth())));
   return next;
 }
@@ -467,7 +507,7 @@ export function intervalFollow(
   month: number,
 ): { rest: string[]; hop: string | null } {
   if (!event.kind) return { rest: [], hop: null };
-  const monthEnd = toIso(new Date(year, month + 1, 0));
+  const monthEnd = toIso(civilDate(year, month + 1, 0));
   const rest: string[] = [];
   let cursor = from;
   for (let i = 0; i < 40; i += 1) {
@@ -513,7 +553,7 @@ export function occurrenceInMonth(event: CalEvent, year: number, month: number):
   if (usesOrdinal(event)) {
     const last = lastDayOfMonth(year, month);
     for (let day = 1; day <= last; day += 1) {
-      const iso = toIso(new Date(year, month, day));
+      const iso = toIso(civilDate(year, month, day));
       if (eventMatchesIso(event, iso)) return iso;
     }
     return null;
@@ -525,14 +565,14 @@ export function occurrenceInMonth(event: CalEvent, year: number, month: number):
     }
     const last = lastDayOfMonth(year, month);
     for (let day = 1; day <= last; day += 1) {
-      const iso = toIso(new Date(year, month, day));
+      const iso = toIso(civilDate(year, month, day));
       if (eventMatchesIso(event, iso)) return iso;
     }
     return null;
   }
   const start = fromIso(event.iso);
   const day = Math.min(start.getDate(), lastDayOfMonth(year, month));
-  const iso = toIso(new Date(year, month, day));
+  const iso = toIso(civilDate(year, month, day));
   return eventMatchesIso(event, iso) ? iso : null;
 }
 
@@ -585,12 +625,44 @@ export function officeHolidayLabel(event: CalEvent): "Feriado Nacional" | "Feria
   return null;
 }
 
+export function isIrpf(event: CalEvent): boolean {
+  return event.source === "irpf";
+}
+
+export function isPis(event: CalEvent): boolean {
+  return event.source === "pis";
+}
+
+export function isIpva(event: CalEvent): boolean {
+  return event.source === "ipva";
+}
+
+export function isFgts(event: CalEvent): boolean {
+  return event.source === "fgts";
+}
+
+export function isBolsa(event: CalEvent): boolean {
+  return event.source === "bolsa";
+}
+
+export function isGas(event: CalEvent): boolean {
+  return event.source === "gas";
+}
+
 export function isPayment(event: CalEvent): boolean {
-  return event.source === "benefit";
+  return event.source === "benefit" || event.source === "pis" || event.source === "irpf" || event.source === "fgts" || event.source === "bolsa" || event.source === "gas";
+}
+
+export function isLicenca(event: CalEvent): boolean {
+  return event.source === "licenca";
 }
 
 export function isBill(event: CalEvent): boolean {
   return event.source === "bill";
+}
+
+export function isBoleto(event: CalEvent): boolean {
+  return event.source === "boleto";
 }
 
 export function isAgendaMark(event: CalEvent): boolean {
@@ -604,7 +676,7 @@ export function eventMarksGrid(event: CalEvent, iso: string): boolean {
 }
 
 export function isOneShotEvent(event: CalEvent): boolean {
-  if (event.source === "birthday" || event.source === "benefit" || event.source === "holiday" || event.source === "bill") {
+  if (event.source === "birthday" || event.source === "benefit" || event.source === "holiday" || event.source === "bill" || event.source === "boleto" || event.source === "irpf" || event.source === "pis" || event.source === "ipva" || event.source === "fgts" || event.source === "bolsa" || event.source === "gas" || event.source === "licenca") {
     return false;
   }
   return !event.kind;
@@ -679,7 +751,7 @@ export function archiveEvent(event: CalEvent): CalEvent {
 export function eventTab(event: CalEvent): CalTabId | null {
   if (event.source === "holiday") return "holidays";
   if (event.source === "birthday") return "birthdays";
-  if (event.source === "benefit" || event.source === "bill") return "finance";
+  if (event.source === "benefit" || event.source === "bill" || event.source === "boleto" || event.source === "irpf" || event.source === "pis" || event.source === "ipva" || event.source === "fgts" || event.source === "bolsa" || event.source === "gas" || event.source === "licenca") return "finance";
   if (event.source === "local" || event.source === "google" || event.source === "period") return "agenda";
   return null;
 }
@@ -697,7 +769,7 @@ export function mergeEventsById(base: CalEvent[], extra: CalEvent[]): CalEvent[]
 }
 
 export type CellSquare = "today" | "election" | "holiday" | "overdue" | "none";
-export type CellNum = "pay" | "bill" | "holiday" | "commemorative" | "election" | "today" | "white" | "fg";
+export type CellNum = "pay" | "bill" | "ir" | "holiday" | "commemorative" | "election" | "today" | "white" | "fg";
 
 export function cellLook(
   cell: CalCell,
@@ -713,7 +785,7 @@ export function cellLook(
   const facultative = holidayTint && cell.events.some(isFacultative);
   const election = holidayTint && cell.events.some(isElection);
   const payment = cell.events.some(isPayment);
-  const bill = cell.events.some(isBill);
+  const bill = cell.events.some(isBill) || cell.events.some(isBoleto) || cell.events.some(isIpva) || cell.events.some(isLicenca);
   const overdue = Boolean(today) && bill && cell.iso < today;
   const dow = fromIso(cell.iso).getDay();
   const weekend = (saturdayTint && dow === 6) || (sundayTint && dow === 0);
@@ -761,9 +833,9 @@ export function buildMonthCells(
 ): CalCell[] {
   const year = view.getFullYear();
   const month = view.getMonth();
-  const firstDow = new Date(year, month, 1).getDay();
+  const firstDow = civilDate(year, month, 1).getDay();
   const offset = weekStart === "sunday" ? firstDow : (firstDow + 6) % 7;
-  const start = new Date(year, month, 1 - offset);
+  const start = civilDate(year, month, 1 - offset);
   const cells: CalCell[] = [];
 
   for (let i = 0; i < 42; i++) {
@@ -805,7 +877,7 @@ export function easterDate(year: number): Date {
   const m = Math.floor((a + 11 * h + 22 * l) / 451);
   const month = Math.floor((h + l - 7 * m + 114) / 31);
   const day = ((h + l - 7 * m + 114) % 31) + 1;
-  return new Date(year, month - 1, day);
+  return civilDate(year, month - 1, day);
 }
 
 function shiftDay(date: Date, days: number): string {

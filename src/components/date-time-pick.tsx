@@ -1,7 +1,7 @@
 import { Calendar, ChevronLeft, ChevronRight, Clock } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { MONTHS, fromIso, toIso, weekLabels } from "@/lib/calendar";
+import { MONTHS, civilDate, fromIso, toIso, weekLabels, YEAR_MAX, YEAR_MIN } from "@/lib/calendar";
 import { cn, withTip } from "@/lib/utils";
 
 function pad(n: number): string {
@@ -10,8 +10,8 @@ function pad(n: number): string {
 
 function validDate(year: number, month: number, day: number): string | null {
   if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
-  if (year < 1900 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) return null;
-  const date = new Date(year, month - 1, day);
+  if (year < YEAR_MIN || year > YEAR_MAX || month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const date = civilDate(year, month - 1, day);
   if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
   return toIso(date);
 }
@@ -108,24 +108,24 @@ function DateCal({
   onPick: (iso: string) => void;
 }) {
   const selected = fromIso(value);
-  const [cursor, setCursor] = useState(() => new Date(selected.getFullYear(), selected.getMonth(), 1));
+  const [cursor, setCursor] = useState(() => civilDate(selected.getFullYear(), selected.getMonth(), 1));
   const year = cursor.getFullYear();
   const month = cursor.getMonth();
-  const firstDow = new Date(year, month, 1).getDay();
+  const firstDow = civilDate(year, month, 1).getDay();
   const offset = weekStart === "sunday" ? firstDow : (firstDow + 6) % 7;
-  const last = new Date(year, month + 1, 0).getDate();
+  const last = civilDate(year, month + 1, 0).getDate();
   const cells = [...Array(offset).fill(null), ...Array.from({ length: last }, (_, i) => i + 1)];
 
   return (
     <div className="cal-dt-cal">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <button type="button" className="cal-dt-nav" aria-label="Mês anterior" onClick={() => setCursor(new Date(year, month - 1, 1))}>
+        <button type="button" className="cal-dt-nav" aria-label="Mês anterior" onClick={() => setCursor(civilDate(year, month - 1, 1))}>
           <ChevronLeft className="size-4" />
         </button>
         <p className="m-0 flex-1 text-center text-sm capitalize text-fg">
           {MONTHS[month]} {year}
         </p>
-        <button type="button" className="cal-dt-nav" aria-label="Próximo mês" onClick={() => setCursor(new Date(year, month + 1, 1))}>
+        <button type="button" className="cal-dt-nav" aria-label="Próximo mês" onClick={() => setCursor(civilDate(year, month + 1, 1))}>
           <ChevronRight className="size-4" />
         </button>
       </div>
@@ -137,7 +137,7 @@ function DateCal({
         ))}
         {cells.map((day, i) => {
           if (!day) return <span key={`e-${i}`} />;
-          const iso = toIso(new Date(year, month, day));
+          const iso = toIso(civilDate(year, month, day));
           return (
             <button
               key={iso}
@@ -241,12 +241,49 @@ function clampSeg(kind: SegKind, raw: string): string {
   return raw.replace(/\D/g, "").slice(0, 4).padStart(4, "0");
 }
 
+export function YearSeg({
+  value,
+  label = "Ano",
+  className,
+  onChange,
+  onComplete,
+}: {
+  value: string;
+  label?: string;
+  className?: string;
+  onChange: (next: string) => void;
+  onComplete?: (next: string) => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  return (
+    <Seg
+      value={value}
+      max={4}
+      kind="year"
+      label={label}
+      wide
+      className={className}
+      inputRef={ref}
+      onChange={(next) => {
+        onChange(next);
+        if (next.length >= 4) onComplete?.(next);
+      }}
+      onFull={() => {}}
+      onBack={() => {
+        const el = ref.current;
+        if (el) el.setSelectionRange(0, el.value.length);
+      }}
+    />
+  );
+}
+
 function Seg({
   value,
   max,
   kind,
   label,
   wide,
+  className,
   inputRef,
   onChange,
   onFull,
@@ -257,6 +294,7 @@ function Seg({
   kind: SegKind;
   label: string;
   wide?: boolean;
+  className?: string;
   inputRef: RefObject<HTMLInputElement | null>;
   onChange: (next: string) => void;
   onFull: () => void;
@@ -338,7 +376,7 @@ function Seg({
       autoComplete="off"
       spellCheck={false}
       aria-label={label}
-      className={cn("cal-seg", wide && "is-year")}
+      className={cn("cal-seg", wide && "is-year", className)}
       onFocus={(event) => {
         const el = event.currentTarget;
         requestAnimationFrame(() => {

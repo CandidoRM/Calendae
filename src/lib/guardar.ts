@@ -61,6 +61,37 @@ export function packCalendae(live?: Partial<CalendaeSave>): CalendaeSave {
   };
 }
 
+/** Caderno da conta: só o que o usuário anotou. Feriado/INSS/almanaque ficam fora. */
+export function packNotebook(live: {
+  settings: unknown;
+  events: unknown;
+  history: unknown;
+}): CalendaeSave {
+  return {
+    v: 1,
+    savedAt: new Date().toISOString(),
+    settings: live.settings,
+    events: live.events,
+    history: live.history,
+    periods: readJson(PERIODS_KEY),
+    holidays: null,
+    inss: null,
+    almanac: null,
+    remindersFired: null,
+  };
+}
+
+export function notebookPrint(settings: unknown, events: unknown, history: unknown) {
+  return JSON.stringify({ settings, events, history });
+}
+
+export function applyNotebook(data: CalendaeSave) {
+  if (data.settings) writeJson(SETTINGS_KEY, data.settings);
+  if (data.events) writeJson(EVENTS_KEY, data.events);
+  if (data.history) writeJson(HISTORY_KEY, data.history);
+  if (data.periods) writeJson(PERIODS_KEY, data.periods);
+}
+
 export function applyCalendaeSave(data: CalendaeSave) {
   if (data.settings) writeJson(SETTINGS_KEY, data.settings);
   if (data.events) writeJson(EVENTS_KEY, data.events);

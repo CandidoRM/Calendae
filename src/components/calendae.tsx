@@ -4,17 +4,17 @@ import { A11yHint } from "@/components/a11y-hint";
 import { BirthdaysTab } from "@/components/birthdays-tab";
 import { FinancesTab } from "@/components/finances-tab";
 import { CalendarGlyph, useGlyphFlash } from "@/components/calendar-glyph";
-import { DatePick, TimePick } from "@/components/date-time-pick";
+import { DatePick, TimePick, YearSeg } from "@/components/date-time-pick";
 import { ContactLine } from "@/components/contact-line";
 import { HeaderMenu } from "@/components/header-menu";
 import { HistoryTab } from "@/components/history-tab";
 import { HolidaysTab } from "@/components/holidays-tab";
 import { MonthGrid } from "@/components/month-grid";
 import { Button } from "@/components/ui/button";
-import { redirectToLoginIfRequired, useRefetchWhenConnectorReady } from "@/lib/app-data";
+import { redirectToLoginIfRequired } from "@/lib/app-data";
 import { setCalendaeLoginOff, useCalendaeSession } from "@/lib/calendae-auth";
 import { pullCloud, pushCloud } from "@/lib/cloud";
-import { applyCalendaeSave, clearLocalCalendae, packCalendae } from "@/lib/guardar";
+import { applyNotebook, clearLocalCalendae, notebookPrint, packNotebook } from "@/lib/guardar";
 import { signOut } from "@/lib/auth/client";
 import { CONTACT_MAX, fitContact, pickDeviceContact } from "@/lib/contacts";
 import {
@@ -35,6 +35,7 @@ import {
   holidaysForYears,
   isDueForHistory,
   archiveEvent,
+  civilDate,
   isFacultative,
   isNational,
   isPeriodEvent,
@@ -59,6 +60,8 @@ import {
   toIso,
   uniqueEvents,
   weekdayName,
+  YEAR_MAX,
+  YEAR_MIN,
   type CalEvent,
   type EventKind,
   type HolidayStore,
@@ -72,9 +75,20 @@ import { electionDates, firstRoundIso, secondRoundIso } from "@/lib/elections";
 import {
   dayAfter,
   ensureAlmanac,
+  irpfForYear,
+  irpfLotsForYear,
   showElectionSecond,
+  stampFgts,
+  stampIrpf,
+  stampIrpfLots,
+  stampPis,
   stampSecondRound,
 } from "@/lib/almanac";
+import { pisEvent } from "@/lib/pis";
+import { fgtsEvent, fgtsWindow } from "@/lib/fgts";
+import { bolsaEvent, gasEvent, nisDigit, sanitizeNis } from "@/lib/bolsa";
+import { ipvaEvent, ipvaMarks, ipvaParcels, normalizeUf, plateDigit, sanitizePlate } from "@/lib/ipva";
+import { licencaEvent } from "@/lib/licenciamento";
 import {
   enableReminders,
   reminderStatusLabel,
@@ -152,6 +166,62 @@ function readSettings(): Settings {
       a11ySaturated: Boolean(parsed.a11ySaturated),
       a11yColorblind: Boolean(parsed.a11yColorblind),
       a11yHints: Boolean(parsed.a11yHints),
+      pisBirthMonth:
+        typeof parsed.pisBirthMonth === "number" && parsed.pisBirthMonth >= 1 && parsed.pisBirthMonth <= 12
+          ? parsed.pisBirthMonth
+          : null,
+      fgtsBirthMonth:
+        typeof parsed.fgtsBirthMonth === "number" && parsed.fgtsBirthMonth >= 1 && parsed.fgtsBirthMonth <= 12
+          ? parsed.fgtsBirthMonth
+          : null,
+      laborMonth: (() => {
+        const n = parsed.laborMonth ?? parsed.pisBirthMonth ?? parsed.fgtsBirthMonth;
+        return typeof n === "number" && n >= 1 && n <= 12 ? n : null;
+      })(),
+      pisOn: typeof parsed.pisOn === "boolean" ? parsed.pisOn : Boolean(parsed.pisBirthMonth),
+      fgtsOn:
+        typeof parsed.fgtsOn === "boolean"
+          ? parsed.fgtsOn
+          : Boolean(parsed.fgtsBirthMonth ?? parsed.pisBirthMonth),
+      laborTriedYear:
+        typeof parsed.laborTriedYear === "number" ? parsed.laborTriedYear : null,
+      bolsaNis: typeof parsed.bolsaNis === "string" ? parsed.bolsaNis.replace(/\D/g, "").slice(0, 11) : "",
+      bolsaOn:
+        typeof parsed.bolsaOn === "boolean"
+          ? parsed.bolsaOn
+          : Boolean(typeof parsed.bolsaNis === "string" && parsed.bolsaNis.replace(/\D/g, "")),
+      gasOn: Boolean(parsed.gasOn),
+      ipvaUf: typeof parsed.ipvaUf === "string" ? parsed.ipvaUf.replace(/[^a-zA-Z]/g, "").slice(0, 2).toUpperCase() : "",
+      ipvaPlate: (() => {
+        if (typeof parsed.ipvaPlate === "string" && parsed.ipvaPlate) return sanitizePlate(parsed.ipvaPlate);
+        if (typeof parsed.ipvaDigit === "number") return String(parsed.ipvaDigit);
+        return "";
+      })(),
+      ipvaDigit: (() => {
+        const plate =
+          typeof parsed.ipvaPlate === "string" && parsed.ipvaPlate
+            ? sanitizePlate(parsed.ipvaPlate)
+            : "";
+        const fromPlate = plateDigit(plate);
+        if (fromPlate !== null) return fromPlate;
+        return typeof parsed.ipvaDigit === "number" && parsed.ipvaDigit >= 0 && parsed.ipvaDigit <= 9
+          ? parsed.ipvaDigit
+          : null;
+      })(),
+      ipvaOn:
+        typeof parsed.ipvaOn === "boolean"
+          ? parsed.ipvaOn
+          : Boolean(
+              (typeof parsed.ipvaPlate === "string" && parsed.ipvaPlate) ||
+                typeof parsed.ipvaDigit === "number",
+            ),
+      licencaOn:
+        typeof parsed.licencaOn === "boolean"
+          ? parsed.licencaOn
+          : Boolean(
+              (typeof parsed.ipvaPlate === "string" && parsed.ipvaPlate) ||
+                typeof parsed.ipvaDigit === "number",
+            ),
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -545,6 +615,48 @@ function recallFromArchive(
   );
 }
 
+function YearType({ year, onYear }: { year: number; onYear: (next: number) => void }) {
+  const [text, setText] = useState(String(year).padStart(4, "0"));
+  const [flash, setFlash] = useState(false);
+  const [pick, setPick] = useState(false);
+  const flashT = useRef(0);
+  useEffect(() => {
+    setText(String(year).padStart(4, "0"));
+  }, [year]);
+
+  function commit(raw: string) {
+    if (raw.length !== 4) {
+      setText(String(year).padStart(4, "0"));
+      return;
+    }
+    const next = Number(raw);
+    if (!Number.isFinite(next) || next < YEAR_MIN || next > YEAR_MAX) {
+      setText(String(year).padStart(4, "0"));
+      return;
+    }
+    if (next !== year) onYear(next);
+    else setText(String(next).padStart(4, "0"));
+  }
+
+  function ping() {
+    setPick(true);
+    setFlash(false);
+    requestAnimationFrame(() => setFlash(true));
+    window.clearTimeout(flashT.current);
+    flashT.current = window.setTimeout(() => setFlash(false), 1250);
+  }
+
+  return (
+    <span
+      className={cn("cal-year-btn cal-year-type", flash && "is-flash", pick && "is-pick")}
+      onPointerDown={ping}
+      onBlurCapture={() => setPick(false)}
+    >
+      <YearSeg value={text} className="cal-year-seg" onChange={setText} onComplete={commit} />
+    </span>
+  );
+}
+
 function ContactField({
   value,
   onChange,
@@ -580,6 +692,9 @@ function ContactField({
   );
 }
 
+/** Uma puxada da nuvem por login, sobrevive a remount. Não zera no flicker da sessão. */
+let cloudOnceFor = "";
+
 export function Calendae() {
   const [today, setToday] = useState(todayIso);
   const [view, setView] = useState(() => fromIso(todayIso()));
@@ -610,12 +725,21 @@ export function Calendae() {
   const [draftDate, setDraftDate] = useState(todayIso);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [hydrated, setHydrated] = useState(false);
-  const [openMenu, setOpenMenu] = useState<"month" | "year" | null>(null);
+  const [openMenu, setOpenMenu] = useState<"month" | null>(null);
   const [openEventId, setOpenEventId] = useState<string | null>(null);
   const [openHolidayIso, setOpenHolidayIso] = useState<string | null>(null);
   const [openBirthdayId, setOpenBirthdayId] = useState<string | null>(null);
   const [openBenefitId, setOpenBenefitId] = useState<string | null>(null);
   const [openBillId, setOpenBillId] = useState<string | null>(null);
+  const [openIrpfId, setOpenIrpfId] = useState<string | null>(null);
+  const [openPisId, setOpenPisId] = useState<string | null>(null);
+  const [openIpvaId, setOpenIpvaId] = useState<string | null>(null);
+  const [openFgtsId, setOpenFgtsId] = useState<string | null>(null);
+  const [openBolsaId, setOpenBolsaId] = useState<string | null>(null);
+  const [openGasId, setOpenGasId] = useState<string | null>(null);
+  const [openLicencaId, setOpenLicencaId] = useState<string | null>(null);
+  const [irpfRev, setIrpfRev] = useState(0);
+  const [laborRev, setLaborRev] = useState(0);
   const [openHistoryId, setOpenHistoryId] = useState<string | null>(null);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [reminderStatus, setReminderStatus] = useState<string | null>(null);
@@ -628,6 +752,7 @@ export function Calendae() {
   viewRef.current = view;
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
+  const agendaDraftId = useRef<string | null>(null);
   const swipeRef = useRef<HTMLElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
   const [canScrollDown, setCanScrollDown] = useState(true);
@@ -643,9 +768,11 @@ export function Calendae() {
   const hideDownTimer = useRef(0);
   const hideUpTimer = useRef(0);
   const firstLaunch = useRef(false);
-  const cloudOnce = useRef(false);
+  const pulledFor = useRef<string | null>(null);
+  const lastPushPrint = useRef("");
   const [cloudStatus, setCloudStatus] = useState<string | null>(null);
-  const { user, isPending: authPending } = useCalendaeSession();
+  const { user } = useCalendaeSession();
+  const userId = user?.id ?? null;
 
   useLayoutEffect(() => {
     firstLaunch.current = !readSettingsRaw();
@@ -742,78 +869,25 @@ export function Calendae() {
   }, [inssStore, hydrated]);
 
   useEffect(() => {
-    if (!user) cloudOnce.current = false;
-  }, [user]);
+    if (!userId) {
+      pulledFor.current = null;
+      lastPushPrint.current = "";
+    }
+  }, [userId]);
 
   useEffect(() => {
-    if (!hydrated || authPending || !user || cloudOnce.current) return;
-    cloudOnce.current = true;
-    void (async () => {
-      try {
-        setCloudStatus("Sincronizando…");
-        const cloud = await pullCloud();
-        const live = packCalendae({
-          settings,
-          events: localEvents,
-          history,
-          holidays: holidayStore,
-          inss: inssStore,
-        });
-        if (!cloud) {
-          await pushCloud({ data: live });
-          setCloudStatus("Agenda na conta.");
-          return;
-        }
-        const cloudEvents = Array.isArray(cloud.events) ? (cloud.events as CalEvent[]) : [];
-        const cloudHist = Array.isArray(cloud.history) ? (cloud.history as CalEvent[]) : [];
-        const mergedEvents = mergeEventsById(localEvents, cloudEvents);
-        const mergedHist = mergeEventsById(history, cloudHist);
-        applyCalendaeSave({
-          ...cloud,
-          events: mergedEvents,
-          history: mergedHist,
-        });
-        setLocalEvents(mergedEvents);
-        setHistory(mergedHist);
-        setSettings(readSettings());
-        setHolidayStore(readHolidayStore());
-        const inss = readInssStore();
-        applyInssStore(inss);
-        setInssStore(inss);
-        await pushCloud({
-          data: packCalendae({
-            settings: readSettings(),
-            events: mergedEvents,
-            history: mergedHist,
-            holidays: readHolidayStore(),
-            inss,
-          }),
-        });
-        setCloudStatus("Agenda na conta.");
-      } catch {
-        cloudOnce.current = false;
-        setCloudStatus("Nuvem falhou. Toque em Login de novo.");
-      }
-    })();
-  }, [hydrated, authPending, user]);
-
-  useEffect(() => {
-    if (!hydrated || !user || !cloudOnce.current) return;
+    if (!hydrated || !userId || pulledFor.current !== userId) return;
+    const print = notebookPrint(settings, localEvents, history);
+    if (print === lastPushPrint.current) return;
     const wait = window.setTimeout(() => {
+      if (print === lastPushPrint.current) return;
+      lastPushPrint.current = print;
       void pushCloud({
-        data: packCalendae({
-          settings,
-          events: localEvents,
-          history,
-          holidays: holidayStore,
-          inss: inssStore,
-        }),
-      })
-        .then(() => setCloudStatus("Agenda na conta."))
-        .catch(() => setCloudStatus("Nuvem falhou."));
-    }, 900);
+        data: packNotebook({ settings, events: localEvents, history }),
+      }).catch(() => setCloudStatus("Nuvem falhou."));
+    }, 1500);
     return () => window.clearTimeout(wait);
-  }, [localEvents, history, settings, holidayStore, inssStore, hydrated, user]);
+  }, [settings, localEvents, history, hydrated, userId]);
 
   useEffect(() => {
     const tick = () => {
@@ -940,6 +1014,59 @@ export function Calendae() {
 
   useEffect(() => {
     if (!hydrated) return;
+    const row = ensureAlmanac(year).irpf;
+    if (row?.confirmed && row.lots?.some((lot) => lot.confirmed)) return;
+    let cancelled = false;
+    void import("@/lib/calendar-server").then(async ({ confirmIrpfDeadline }) => {
+      try {
+        const hit = await confirmIrpfDeadline({ data: { year } });
+        if (cancelled) return;
+        if (hit.confirmed && hit.iso) {
+          stampIrpf(year, hit.iso, hit.source ?? "receita", hit.lots);
+          setIrpfRev((n) => n + 1);
+        } else if (hit.lots?.some((lot) => lot.confirmed)) {
+          stampIrpfLots(year, hit.lots);
+          setIrpfRev((n) => n + 1);
+        }
+      } catch {
+        /* keeps the May projection without (confirmado) */
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrated, year]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    if (settings.laborTriedYear === todayYear) return;
+    let cancelled = false;
+    const stop = whenIdle(() => {
+      void import("@/lib/calendar-server").then(async ({ confirmLaborYear }) => {
+        try {
+          const hit = await confirmLaborYear({ data: { year: todayYear } });
+          if (cancelled) return;
+          if (hit.pis) stampPis(todayYear, hit.pis.byMonth, hit.pis.source, hit.pis.confirmed);
+          if (hit.fgts) stampFgts(todayYear, hit.fgts.byMonth, hit.fgts.source, hit.fgts.confirmed);
+          if (hit.pis || hit.fgts) setLaborRev((n) => n + 1);
+        } catch {
+          /* keeps built-in / previsto */
+        }
+        if (!cancelled) {
+          setSettings((prev) =>
+            prev.laborTriedYear === todayYear ? prev : { ...prev, laborTriedYear: todayYear },
+          );
+        }
+      });
+    });
+    return () => {
+      cancelled = true;
+      stop();
+    };
+  }, [hydrated, settings.laborTriedYear, todayYear]);
+
+  useEffect(() => {
+    if (!hydrated) return;
     const y = year;
     if (inssStore[String(y)]?.table) {
       rememberInssTable(y, inssStore[String(y)].table);
@@ -980,6 +1107,69 @@ export function Calendae() {
       ]),
     [holidayStore, year, municipalEvents],
   );
+  const irpfEvent = useMemo(() => irpfForYear(year), [year, irpfRev]);
+  const irpfLots = useMemo(() => irpfLotsForYear(year), [year, irpfRev]);
+  const laborMonth = settings.laborMonth;
+  const pis = useMemo(() => {
+    if (!laborMonth || !settings.pisOn) return null;
+    const base = pisEvent(year, laborMonth);
+    const stamp = ensureAlmanac(year).pis;
+    const iso = stamp?.byMonth?.[laborMonth];
+    if (!iso) return base;
+    return { ...base, iso, confirmed: stamp.confirmed };
+  }, [year, laborMonth, settings.pisOn, laborRev]);
+  const fgts = useMemo(() => {
+    if (!laborMonth || !settings.fgtsOn) return null;
+    const base = fgtsEvent(year, laborMonth);
+    const stamp = ensureAlmanac(year).fgts;
+    const row = stamp?.byMonth?.[laborMonth];
+    if (!row) return base;
+    return { ...base, iso: row.iso, confirmed: stamp.confirmed };
+  }, [year, laborMonth, settings.fgtsOn, laborRev]);
+  const fgtsUntil = useMemo(() => {
+    if (!laborMonth || !settings.fgtsOn) return null;
+    const stamp = ensureAlmanac(year).fgts?.byMonth?.[laborMonth];
+    if (stamp?.until) return stamp.until;
+    return fgtsWindow(year, laborMonth).until;
+  }, [year, laborMonth, settings.fgtsOn, laborRev]);
+  const bolsaDigit = nisDigit(settings.bolsaNis);
+  const bolsa = useMemo(
+    () =>
+      bolsaDigit !== null && settings.bolsaOn
+        ? bolsaEvent(year, view.getMonth(), bolsaDigit, settings.bolsaNis)
+        : null,
+    [year, view, bolsaDigit, settings.bolsaNis, settings.bolsaOn],
+  );
+  const gas = useMemo(
+    () =>
+      bolsaDigit !== null && settings.gasOn ? gasEvent(year, view.getMonth(), settings.bolsaNis) : null,
+    [year, view, bolsaDigit, settings.bolsaNis, settings.gasOn],
+  );
+  const ipvaUf = settings.ipvaUf || settings.cityUf;
+  const ipva = useMemo(
+    () =>
+      settings.ipvaOn && settings.ipvaDigit !== null ? ipvaEvent(year, ipvaUf, settings.ipvaDigit) : null,
+    [year, ipvaUf, settings.ipvaDigit, settings.ipvaOn],
+  );
+  const ipvaLots = useMemo(
+    () =>
+      settings.ipvaOn && settings.ipvaDigit !== null
+        ? ipvaParcels(year, ipvaUf, settings.ipvaDigit) ?? []
+        : [],
+    [year, ipvaUf, settings.ipvaDigit, settings.ipvaOn],
+  );
+  const ipvaGrid = useMemo(
+    () =>
+      settings.ipvaOn && settings.ipvaDigit !== null ? ipvaMarks(year, ipvaUf, settings.ipvaDigit) : [],
+    [year, ipvaUf, settings.ipvaDigit, settings.ipvaOn],
+  );
+  const licenca = useMemo(
+    () =>
+      settings.licencaOn && settings.ipvaDigit !== null
+        ? licencaEvent(year, ipvaUf, settings.ipvaDigit)
+        : null,
+    [year, ipvaUf, settings.ipvaDigit, settings.licencaOn],
+  );
   const extraHolidays = useMemo(() => {
     const list: CalEvent[] = [];
     if (settings.commemorative) list.push(...commemorativeDates(year));
@@ -1004,9 +1194,16 @@ export function Calendae() {
         ...benefitEvents,
         ...holidays,
         ...extraHolidays,
+        irpfEvent,
+        ...(pis ? [pis] : []),
+        ...(fgts ? [fgts] : []),
+        ...(bolsa ? [bolsa] : []),
+        ...(gas ? [gas] : []),
+        ...(licenca ? [licenca] : []),
+        ...ipvaGrid,
         ...googleEvents.filter((event) => !isDueForHistory(event, today)),
       ]).filter((event) => tabAllowsEvent(settings.tabs, event)),
-    [localEvents, benefitEvents, holidays, extraHolidays, googleEvents, today, settings.tabs],
+    [localEvents, benefitEvents, holidays, extraHolidays, irpfEvent, pis, fgts, bolsa, gas, licenca, ipvaGrid, googleEvents, today, settings.tabs],
   );
   const cells = useMemo(
     () => buildMonthCells(view, today, allEvents, settings.weekStart),
@@ -1025,7 +1222,7 @@ export function Calendae() {
     const month = view.getMonth();
     return allEvents
       .flatMap((event) => {
-        if (event.source === "holiday" || event.source === "birthday" || event.source === "benefit" || event.source === "bill")
+        if (event.source === "holiday" || event.source === "birthday" || event.source === "benefit" || event.source === "bill" || event.source === "boleto" || event.source === "irpf" || event.source === "pis" || event.source === "ipva" || event.source === "fgts" || event.source === "bolsa" || event.source === "gas" || event.source === "licenca")
           return [];
         if (isPeriodEvent(event)) {
           return eventOverlapsMonth(event, year, month) ? [{ event, iso: event.iso }] : [];
@@ -1041,7 +1238,7 @@ export function Calendae() {
           return iso ? [{ event, iso }] : [];
         }
         if (event.kind === "personalizado") {
-          const last = new Date(year, month + 1, 0).getDate();
+          const last = civilDate(year, month + 1, 0).getDate();
           const rows: { event: CalEvent; iso: string }[] = [];
           for (let day = 1; day <= last; day += 1) {
             const iso = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
@@ -1051,8 +1248,8 @@ export function Calendae() {
         }
         if (isDueForHistory(event, today, new Date(nowMs))) return [];
         const last = lastVisibleIso(event);
-        const monthStart = toIso(new Date(year, month, 1));
-        const monthEnd = toIso(new Date(year, month + 1, 0));
+        const monthStart = toIso(civilDate(year, month, 1));
+        const monthEnd = toIso(civilDate(year, month + 1, 0));
         if (last < monthStart || event.iso > monthEnd) return [];
         return [{ event, iso: event.iso }];
       })
@@ -1074,6 +1271,10 @@ export function Calendae() {
   );
   const bills = useMemo(
     () => localEvents.filter((event) => event.source === "bill"),
+    [localEvents],
+  );
+  const boletos = useMemo(
+    () => localEvents.filter((event) => event.source === "boleto"),
     [localEvents],
   );
 
@@ -1107,8 +1308,8 @@ export function Calendae() {
   const syncGoogle = useCallback(async ({ login = false }: { login?: boolean } = {}) => {
     setGooglePending(true);
     try {
-      const start = new Date(viewRef.current.getFullYear(), viewRef.current.getMonth(), 1);
-      const end = new Date(viewRef.current.getFullYear(), viewRef.current.getMonth() + 1, 1);
+      const start = civilDate(viewRef.current.getFullYear(), viewRef.current.getMonth(), 1);
+      const end = civilDate(viewRef.current.getFullYear(), viewRef.current.getMonth() + 1, 1);
       const { getGoogleMonth } = await import("@/lib/calendar-server");
       const row = await getGoogleMonth({
         data: { timeMin: start.toISOString(), timeMax: end.toISOString() },
@@ -1145,15 +1346,6 @@ export function Calendae() {
     }
   }, []);
 
-  useRefetchWhenConnectorReady(googlePending, () => {
-    void syncGoogle();
-  });
-
-  useEffect(() => {
-    if (!hydrated) return;
-    void syncGoogle();
-  }, [hydrated, year, view, syncGoogle]);
-
   async function locateCity() {
     try {
       const { locateMunicipio } = await import("@/lib/calendar-server");
@@ -1170,24 +1362,6 @@ export function Calendae() {
   }
 
   useEffect(() => {
-    if (!hydrated || !firstLaunch.current) return;
-    firstLaunch.current = false;
-    void locateCity().then((city) => {
-      if (!city) {
-        setSettings((prev) => ({ ...prev, municipal: false }));
-        return;
-      }
-      setSettings((prev) => ({
-        ...prev,
-        municipal: true,
-        cityName: city.name,
-        cityIbge: city.ibge,
-        cityUf: city.uf,
-      }));
-    });
-  }, [hydrated]);
-
-  useEffect(() => {
     if (!hydrated) return;
     startReminders(
       [...localEvents, ...googleEvents].filter((event) => tabAllowsEvent(settings.tabs, event)),
@@ -1195,18 +1369,17 @@ export function Calendae() {
   }, [hydrated, localEvents, googleEvents, settings.tabs]);
 
   const monthOptions = MONTHS.map((label, value) => ({ value, label }));
-  const yearOptions = Array.from({ length: 51 }, (_, i) => {
-    const item = 2000 + i;
-    return { value: item, label: String(item) };
-  });
 
   function jumpTo(next: Date, selectIso?: string) {
+    const y = next.getFullYear();
+    if (y < YEAR_MIN) next = civilDate(YEAR_MIN, next.getMonth(), 1);
+    if (y > YEAR_MAX) next = civilDate(YEAR_MAX, next.getMonth(), 1);
     setView(next);
     if (selectIso) {
       setSelected(selectIso);
     } else {
       const day = fromIso(selectedRef.current).getDate();
-      const last = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
+      const last = civilDate(next.getFullYear(), next.getMonth() + 1, 0).getDate();
       const iso = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(Math.min(day, last)).padStart(2, "0")}`;
       setSelected(iso);
     }
@@ -1220,7 +1393,7 @@ export function Calendae() {
     }
     const date = fromIso(iso);
     if (date.getMonth() !== view.getMonth() || date.getFullYear() !== year) {
-      jumpTo(new Date(date.getFullYear(), date.getMonth(), 1), iso);
+      jumpTo(civilDate(date.getFullYear(), date.getMonth(), 1), iso);
     } else {
       setSelected(iso);
     }
@@ -1232,6 +1405,13 @@ export function Calendae() {
     setOpenBenefitId(null);
     setOpenHistoryId(null);
     setOpenBillId(null);
+    setOpenIrpfId(null);
+    setOpenPisId(null);
+    setOpenIpvaId(null);
+    setOpenFgtsId(null);
+    setOpenBolsaId(null);
+    setOpenGasId(null);
+    setOpenLicencaId(null);
   }
 
   function pickCity(city: { ibge: number; name: string; uf: string }) {
@@ -1353,7 +1533,7 @@ export function Calendae() {
     const nextIso = postponeIso(event, iso);
     const next = fromIso(nextIso);
     updateEvent(event.id, { iso: nextIso });
-    jumpTo(new Date(next.getFullYear(), next.getMonth(), 1), nextIso);
+    jumpTo(civilDate(next.getFullYear(), next.getMonth(), 1), nextIso);
   }
 
   function markDone(event: CalEvent, iso: string) {
@@ -1392,6 +1572,13 @@ export function Calendae() {
     setOpenBenefitId(null);
     setOpenHistoryId(null);
     setOpenBillId(null);
+    setOpenIrpfId(null);
+    setOpenPisId(null);
+    setOpenIpvaId(null);
+    setOpenFgtsId(null);
+    setOpenBolsaId(null);
+    setOpenGasId(null);
+    setOpenLicencaId(null);
   }
 
   function saveEditEvent() {
@@ -1439,6 +1626,95 @@ export function Calendae() {
     setEditingEventId(null);
   }
 
+  useEffect(() => {
+    if (!adding) return;
+    const title = draftTitle.trim();
+    if (!title) {
+      if (agendaDraftId.current) {
+        const id = agendaDraftId.current;
+        agendaDraftId.current = null;
+        setLocalEvents((prev) => prev.filter((event) => event.id !== id));
+      }
+      return;
+    }
+    if (!agendaDraftId.current) agendaDraftId.current = newEventId();
+    const id = agendaDraftId.current;
+    const next: CalEvent = {
+      id,
+      iso: draftDate || selected,
+      title: title.slice(0, 45),
+      time: draftTime,
+      place: draftPlace.trim().slice(0, 45) || undefined,
+      contact: draftContact.trim() ? fitContact(draftContact) : undefined,
+      ...kindPatch(),
+      ...durationPatch(),
+      source: !kindPatch().kind && Number(draftDurDays) > 0 ? "period" : "local",
+      notify: draftNotify,
+    };
+    setLocalEvents((prev) => {
+      const index = prev.findIndex((event) => event.id === id);
+      if (index < 0) return [...prev, next];
+      const copy = [...prev];
+      copy[index] = { ...copy[index], ...next };
+      return copy;
+    });
+  }, [
+    adding,
+    draftTitle,
+    draftPlace,
+    draftContact,
+    draftTime,
+    draftDate,
+    draftKind,
+    draftEveryDays,
+    draftMonthSide,
+    draftMonthNth,
+    draftMonthUtil,
+    draftNotify,
+    draftDurTime,
+    draftDurDays,
+    selected,
+  ]);
+
+  useEffect(() => {
+    if (!editingEventId) return;
+    const title = draftTitle.trim();
+    if (!title) return;
+    const current = localEvents.find((event) => event.id === editingEventId);
+    const source =
+      current?.source === "birthday" || current?.source === "google"
+        ? current.source
+        : !kindPatch().kind && Number(draftDurDays) > 0
+          ? "period"
+          : "local";
+    updateEvent(editingEventId, {
+      title: title.slice(0, 45),
+      iso: draftDate,
+      time: draftTime,
+      place: draftPlace.trim().slice(0, 45) || undefined,
+      contact: draftContact.trim() ? fitContact(draftContact) : undefined,
+      ...kindPatch(),
+      ...durationPatch(),
+      source,
+      notify: draftNotify,
+    });
+  }, [
+    editingEventId,
+    draftTitle,
+    draftPlace,
+    draftContact,
+    draftTime,
+    draftDate,
+    draftKind,
+    draftEveryDays,
+    draftMonthSide,
+    draftMonthNth,
+    draftMonthUtil,
+    draftNotify,
+    draftDurTime,
+    draftDurDays,
+  ]);
+
   async function armNotify(next: boolean) {
     setDraftNotify(next);
     if (!next) return;
@@ -1476,6 +1752,7 @@ export function Calendae() {
       else jumpTo(shiftMonth(viewRef.current, dy < 0 ? 1 : -1));
     }
     function onWheel(event: WheelEvent) {
+      if ((event.target as HTMLElement | null)?.closest(".cal-pick-menu")) return;
       event.preventDefault();
       const now = Date.now();
       if (now - lastWheel.current < 420) return;
@@ -1498,6 +1775,7 @@ export function Calendae() {
 
   useEffect(() => {
     function onPageWheel(event: WheelEvent) {
+      if ((event.target as HTMLElement | null)?.closest(".cal-pick-menu")) return;
       const page = pageRef.current;
       if (!page) return;
       const grid = document.querySelector(".cal-month-grid");
@@ -1585,20 +1863,9 @@ export function Calendae() {
                 optionClassName="cal-month-option"
                 onOpen={() => setOpenMenu("month")}
                 onClose={() => setOpenMenu(null)}
-                onPick={(month) => jumpTo(new Date(year, month, 1))}
+                onPick={(month) => jumpTo(civilDate(year, month, 1))}
               />
-              <HeaderMenu
-                label="Escolher ano"
-                value={year}
-                options={yearOptions}
-                open={openMenu === "year"}
-                soft
-                buttonClassName="cal-year-btn"
-                optionClassName="cal-year-option"
-                onOpen={() => setOpenMenu("year")}
-                onClose={() => setOpenMenu(null)}
-                onPick={(nextYear) => jumpTo(new Date(nextYear, view.getMonth(), 1))}
-              />
+              <YearType year={year} onYear={(nextYear) => jumpTo(civilDate(nextYear, view.getMonth(), 1))} />
             </div>
             <div className="flex shrink-0 items-end">
               {view.getMonth() !== fromIso(today).getMonth() || year !== fromIso(today).getFullYear() ? (
@@ -1714,6 +1981,13 @@ export function Calendae() {
               setOpenBenefitId(null);
               setOpenHistoryId(null);
     setOpenBillId(null);
+    setOpenIrpfId(null);
+    setOpenPisId(null);
+    setOpenIpvaId(null);
+    setOpenFgtsId(null);
+    setOpenBolsaId(null);
+    setOpenGasId(null);
+    setOpenLicencaId(null);
             }}
           />
           ) : null}
@@ -1730,6 +2004,7 @@ export function Calendae() {
                 onClick={() => {
                   pingGlyph();
                   if (!adding) {
+                    agendaDraftId.current = null;
                     setDraftTitle("");
                     setDraftPlace("");
                     setDraftContact("");
@@ -1760,7 +2035,6 @@ export function Calendae() {
                 className="mt-3 flex flex-col gap-2 border-t border-line pt-3"
                 onSubmit={(event) => {
                   event.preventDefault();
-                  addEvent();
                 }}
               >
                 <div className="flex items-center">
@@ -1845,9 +2119,6 @@ export function Calendae() {
                   onNth={setDraftMonthNth}
                   onUtil={() => setDraftMonthUtil((v) => !v)}
                 />
-                <Button type="submit" className="w-full">
-                  Anotar
-                </Button>
               </form>
             ) : null}
 
@@ -1932,7 +2203,6 @@ export function Calendae() {
                               className="flex flex-col gap-2 pb-3"
                               onSubmit={(formEvent) => {
                                 formEvent.preventDefault();
-                                saveEditEvent();
                               }}
                             >
                               <div className="flex items-center">
@@ -2010,9 +2280,6 @@ export function Calendae() {
                                 onNth={setDraftMonthNth}
                                 onUtil={() => setDraftMonthUtil((v) => !v)}
                               />
-                              <Button type="submit" className="w-full">
-                                Anotar
-                              </Button>
                             </form>
                           ) : (
                             <div className="cal-agenda-follow pb-1">
@@ -2029,7 +2296,7 @@ export function Calendae() {
                                           d.getMonth() !== view.getMonth() ||
                                           d.getFullYear() !== year
                                         ) {
-                                          jumpTo(new Date(d.getFullYear(), d.getMonth(), 1), next);
+                                          jumpTo(civilDate(d.getFullYear(), d.getMonth(), 1), next);
                                         } else {
                                           setSelected(next);
                                         }
@@ -2048,7 +2315,7 @@ export function Calendae() {
                                     className="flex w-[2.85rem] justify-center border-0 bg-transparent p-0 text-[0.65rem] leading-tight text-muted"
                                     onClick={() => {
                                       const d = fromIso(hop);
-                                      jumpTo(new Date(d.getFullYear(), d.getMonth(), 1), hop);
+                                      jumpTo(civilDate(d.getFullYear(), d.getMonth(), 1), hop);
                                       setDraftDate(hop);
                                     }}
                                   >
@@ -2174,6 +2441,13 @@ export function Calendae() {
               setOpenBenefitId(null);
               setOpenHistoryId(null);
     setOpenBillId(null);
+    setOpenIrpfId(null);
+    setOpenPisId(null);
+    setOpenIpvaId(null);
+    setOpenFgtsId(null);
+    setOpenBolsaId(null);
+    setOpenGasId(null);
+    setOpenLicencaId(null);
             }}
           />
           ) : null}
@@ -2188,6 +2462,114 @@ export function Calendae() {
             openBillId={openBillId}
             benefits={benefits}
             bills={bills}
+            boletos={boletos}
+            irpf={irpfEvent}
+            irpfLots={irpfLots}
+            irpfOpen={openIrpfId === irpfEvent.id}
+            pis={pis}
+            pisOpen={Boolean(pis && openPisId === pis.id)}
+            laborMonth={laborMonth}
+            onLaborMonth={(month) =>
+              setSettings((prev) => ({
+                ...prev,
+                laborMonth: month,
+                pisBirthMonth: month,
+                fgtsBirthMonth: month,
+              }))
+            }
+            pisOn={settings.pisOn}
+            fgtsOn={settings.fgtsOn}
+            onPisOn={(on) => setSettings((prev) => ({ ...prev, pisOn: on }))}
+            onFgtsOn={(on) => setSettings((prev) => ({ ...prev, fgtsOn: on }))}
+            fgts={fgts}
+            fgtsOpen={Boolean(fgts && openFgtsId === fgts.id)}
+            fgtsUntil={fgtsUntil}
+            onOpenFgts={(event) => {
+              const closing = openFgtsId === event.id;
+              setOpenFgtsId(closing ? null : event.id);
+              if (!closing) {
+                const date = fromIso(event.iso);
+                setView(civilDate(date.getFullYear(), date.getMonth(), 1));
+                setSelected(event.iso);
+              }
+              setOpenEventId(null);
+              setOpenHolidayIso(null);
+              setOpenBirthdayId(null);
+              setOpenBenefitId(null);
+              setOpenHistoryId(null);
+              setOpenBillId(null);
+              setOpenIrpfId(null);
+              setOpenPisId(null);
+              setOpenIpvaId(null);
+              setOpenBolsaId(null);
+    setOpenGasId(null);
+    setOpenLicencaId(null);
+            }}
+            bolsa={bolsa}
+            bolsaOpen={Boolean(bolsa && openBolsaId === bolsa.id)}
+            bolsaNis={settings.bolsaNis}
+            bolsaOn={settings.bolsaOn}
+            gasOn={settings.gasOn}
+            onBolsaNis={(nis) => setSettings((prev) => ({ ...prev, bolsaNis: sanitizeNis(nis) }))}
+            onBolsaOn={(on) => setSettings((prev) => ({ ...prev, bolsaOn: on }))}
+            onGasOn={(on) => setSettings((prev) => ({ ...prev, gasOn: on }))}
+            onOpenBolsa={(event) => {
+              const closing = openBolsaId === event.id;
+              setOpenBolsaId(closing ? null : event.id);
+              if (!closing) {
+                const date = fromIso(event.iso);
+                setView(civilDate(date.getFullYear(), date.getMonth(), 1));
+                setSelected(event.iso);
+              }
+              setOpenEventId(null);
+              setOpenHolidayIso(null);
+              setOpenBirthdayId(null);
+              setOpenBenefitId(null);
+              setOpenHistoryId(null);
+              setOpenBillId(null);
+              setOpenIrpfId(null);
+              setOpenPisId(null);
+              setOpenIpvaId(null);
+              setOpenFgtsId(null);
+              setOpenGasId(null);
+            }}
+            gas={gas}
+            gasOpen={Boolean(gas && openGasId === gas.id)}
+            onOpenGas={(event) => {
+              const closing = openGasId === event.id;
+              setOpenGasId(closing ? null : event.id);
+              if (!closing) {
+                const date = fromIso(event.iso);
+                setView(civilDate(date.getFullYear(), date.getMonth(), 1));
+                setSelected(event.iso);
+              }
+              setOpenEventId(null);
+              setOpenHolidayIso(null);
+              setOpenBirthdayId(null);
+              setOpenBenefitId(null);
+              setOpenHistoryId(null);
+              setOpenBillId(null);
+              setOpenIrpfId(null);
+              setOpenPisId(null);
+              setOpenIpvaId(null);
+              setOpenFgtsId(null);
+              setOpenBolsaId(null);
+              setOpenLicencaId(null);
+            }}
+            ipva={ipva}
+            ipvaOpen={Boolean(ipva && openIpvaId === ipva.id)}
+            ipvaLots={ipvaLots}
+            ipvaUf={settings.ipvaUf}
+            ipvaPlate={settings.ipvaPlate}
+            ipvaOn={settings.ipvaOn}
+            licencaOn={settings.licencaOn}
+            onIpvaUf={(uf) => setSettings((prev) => ({ ...prev, ipvaUf: normalizeUf(uf) }))}
+            onIpvaPlate={(plate) => {
+              const next = sanitizePlate(plate);
+              setSettings((prev) => ({ ...prev, ipvaPlate: next, ipvaDigit: plateDigit(next) }));
+            }}
+            onIpvaOn={(on) => setSettings((prev) => ({ ...prev, ipvaOn: on }))}
+            onLicencaOn={(on) => setSettings((prev) => ({ ...prev, licencaOn: on }))}
             onAdd={(event) => setLocalEvents((prev) => [...prev, event])}
             onRemoveBenefit={(id) => {
               removeEvent(id);
@@ -2196,14 +2578,21 @@ export function Calendae() {
             onRemoveBill={(id) => {
               removeEvent(id);
               setOpenBillId(null);
+    setOpenIrpfId(null);
+    setOpenPisId(null);
+    setOpenIpvaId(null);
+    setOpenFgtsId(null);
+    setOpenBolsaId(null);
+    setOpenGasId(null);
+    setOpenLicencaId(null);
             }}
             onUpdate={(event) => {
               updateEvent(event.id, event);
-              if (event.source === "bill") setSelected(event.iso);
+              if (event.source === "bill" || event.source === "boleto") setSelected(event.iso);
             }}
             onOpenBenefit={(event, iso) => {
               const date = fromIso(iso);
-              setView(new Date(date.getFullYear(), date.getMonth(), 1));
+              setView(civilDate(date.getFullYear(), date.getMonth(), 1));
               setSelected(iso);
               setOpenBenefitId((cur) => (cur === event.id ? null : event.id));
               setOpenEventId(null);
@@ -2212,16 +2601,119 @@ export function Calendae() {
               setOpenBirthdayId(null);
               setOpenHistoryId(null);
               setOpenBillId(null);
+    setOpenIrpfId(null);
+    setOpenPisId(null);
+    setOpenIpvaId(null);
+    setOpenFgtsId(null);
+    setOpenBolsaId(null);
+    setOpenGasId(null);
+    setOpenLicencaId(null);
             }}
             onOpenBill={(event, iso) => {
               setSelected(iso);
               setOpenBillId((cur) => (cur === event.id ? null : event.id));
               setOpenEventId(null);
               setOpenHolidayIso(null);
-          
               setOpenBirthdayId(null);
               setOpenBenefitId(null);
               setOpenHistoryId(null);
+              setOpenIrpfId(null);
+    setOpenPisId(null);
+    setOpenIpvaId(null);
+    setOpenFgtsId(null);
+    setOpenBolsaId(null);
+    setOpenGasId(null);
+    setOpenLicencaId(null);
+            }}
+            onOpenIrpf={(event) => {
+              const closing = openIrpfId === event.id;
+              setOpenIrpfId(closing ? null : event.id);
+              if (!closing) {
+                const date = fromIso(event.iso);
+                setView(civilDate(date.getFullYear(), date.getMonth(), 1));
+                setSelected(event.iso);
+              }
+              setOpenEventId(null);
+              setOpenHolidayIso(null);
+              setOpenBirthdayId(null);
+              setOpenBenefitId(null);
+              setOpenHistoryId(null);
+              setOpenBillId(null);
+              setOpenPisId(null);
+    setOpenIpvaId(null);
+    setOpenFgtsId(null);
+    setOpenBolsaId(null);
+    setOpenGasId(null);
+    setOpenLicencaId(null);
+            }}
+            onOpenLot={(iso) => {
+              const date = fromIso(iso);
+              jumpTo(civilDate(date.getFullYear(), date.getMonth(), 1), iso);
+            }}
+            onOpenPis={(event) => {
+              const closing = openPisId === event.id;
+              setOpenPisId(closing ? null : event.id);
+              if (!closing) {
+                const date = fromIso(event.iso);
+                setView(civilDate(date.getFullYear(), date.getMonth(), 1));
+                setSelected(event.iso);
+              }
+              setOpenEventId(null);
+              setOpenHolidayIso(null);
+              setOpenBirthdayId(null);
+              setOpenBenefitId(null);
+              setOpenHistoryId(null);
+              setOpenBillId(null);
+              setOpenIrpfId(null);
+              setOpenIpvaId(null);
+    setOpenFgtsId(null);
+    setOpenBolsaId(null);
+    setOpenGasId(null);
+    setOpenLicencaId(null);
+            }}
+            onOpenIpva={(event) => {
+              const closing = openIpvaId === event.id;
+              setOpenIpvaId(closing ? null : event.id);
+              if (!closing) {
+                const date = fromIso(event.iso);
+                setView(civilDate(date.getFullYear(), date.getMonth(), 1));
+                setSelected(event.iso);
+              }
+              setOpenEventId(null);
+              setOpenHolidayIso(null);
+              setOpenBirthdayId(null);
+              setOpenBenefitId(null);
+              setOpenHistoryId(null);
+              setOpenBillId(null);
+              setOpenIrpfId(null);
+              setOpenPisId(null);
+              setOpenFgtsId(null);
+    setOpenBolsaId(null);
+    setOpenGasId(null);
+    setOpenLicencaId(null);
+            }}
+            licenca={licenca}
+            licencaOpen={Boolean(licenca && openLicencaId === licenca.id)}
+            onOpenLicenca={(event) => {
+              const closing = openLicencaId === event.id;
+              setOpenLicencaId(closing ? null : event.id);
+              if (!closing) {
+                const date = fromIso(event.iso);
+                setView(civilDate(date.getFullYear(), date.getMonth(), 1));
+                setSelected(event.iso);
+              }
+              setOpenEventId(null);
+              setOpenHolidayIso(null);
+              setOpenBirthdayId(null);
+              setOpenBenefitId(null);
+              setOpenHistoryId(null);
+              setOpenBillId(null);
+              setOpenIrpfId(null);
+              setOpenPisId(null);
+              setOpenIpvaId(null);
+              setOpenFgtsId(null);
+              setOpenBolsaId(null);
+    setOpenGasId(null);
             }}
           />
           ) : null}
@@ -2232,7 +2724,7 @@ export function Calendae() {
             openId={openHistoryId}
             onOpen={(event) => {
               const date = fromIso(event.iso);
-              setView(new Date(date.getFullYear(), date.getMonth(), 1));
+              setView(civilDate(date.getFullYear(), date.getMonth(), 1));
               setSelected(event.iso);
               setOpenHistoryId((cur) => (cur === event.id ? null : event.id));
               setOpenEventId(null);
@@ -2241,11 +2733,25 @@ export function Calendae() {
               setOpenBirthdayId(null);
               setOpenBenefitId(null);
               setOpenBillId(null);
+    setOpenIrpfId(null);
+    setOpenPisId(null);
+    setOpenIpvaId(null);
+    setOpenFgtsId(null);
+    setOpenBolsaId(null);
+    setOpenGasId(null);
+    setOpenLicencaId(null);
             }}
             onRemove={(id) => {
               setHistory((prev) => prev.filter((event) => event.id !== id));
               setOpenHistoryId(null);
               setOpenBillId(null);
+    setOpenIrpfId(null);
+    setOpenPisId(null);
+    setOpenIpvaId(null);
+    setOpenFgtsId(null);
+    setOpenBolsaId(null);
+    setOpenGasId(null);
+    setOpenLicencaId(null);
             }}
             onReschedule={(event) => {
               const next = { ...event, notify: false };
@@ -2257,7 +2763,7 @@ export function Calendae() {
                 setOpenHistoryId(null);
               }
               const date = fromIso(next.iso);
-              jumpTo(new Date(date.getFullYear(), date.getMonth(), 1), next.iso);
+              jumpTo(civilDate(date.getFullYear(), date.getMonth(), 1), next.iso);
             }}
           />
           ) : null}
@@ -2378,13 +2884,7 @@ export function Calendae() {
               onLeaveAccount={async () => {
                 try {
                   await pushCloud({
-                    data: packCalendae({
-                      settings,
-                      events: localEvents,
-                      history,
-                      holidays: holidayStore,
-                      inss: inssStore,
-                    }),
+                    data: packNotebook({ settings, events: localEvents, history }),
                   });
                 } catch {
                   /* still leave the device */
@@ -2397,7 +2897,9 @@ export function Calendae() {
                 setHolidayStore(seedHolidayStore());
                 setInssStore({});
                 setCloudStatus(null);
-                cloudOnce.current = false;
+                pulledFor.current = null;
+                lastPushPrint.current = "";
+                cloudOnceFor = "";
                 setCalendaeLoginOff(true);
                 await signOut();
               }}

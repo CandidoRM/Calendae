@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useCurrentUserState, type AppUser } from "@/lib/auth/use-current-user";
 
 const OFF_KEY = "calendae-login-off";
@@ -31,18 +31,29 @@ function isGateUser(user: AppUser | null) {
 export function useCalendaeSession() {
   const { user, isPending } = useCurrentUserState();
   const [off, setOff] = useState(false);
+  const stable = useRef<AppUser | null>(null);
+
   useEffect(() => {
     setOff(calendaeLoginOff());
     const sync = () => setOff(calendaeLoginOff());
     window.addEventListener("calendae-login", sync);
     window.addEventListener("storage", sync);
-    const id = window.setInterval(sync, 800);
     return () => {
       window.removeEventListener("calendae-login", sync);
       window.removeEventListener("storage", sync);
-      window.clearInterval(id);
     };
   }, []);
+
   const signedIn = Boolean(user) && !off && !isGateUser(user);
-  return { user: signedIn ? user : null, isPending, signedIn };
+  if (signedIn && user) {
+    if (!stable.current || stable.current.id !== user.id) stable.current = user;
+  } else if (!isPending) {
+    stable.current = null;
+  }
+
+  return {
+    user: stable.current,
+    isPending: isPending && !stable.current,
+    signedIn: Boolean(stable.current),
+  };
 }

@@ -1,4 +1,4 @@
-import { fallbackHolidays, fromIso, toIso } from "@/lib/calendar";
+import { civilDate, fallbackHolidays, fromIso, toIso } from "@/lib/calendar";
 
 export type InssBracket = "minimo" | "acima";
 
@@ -201,7 +201,7 @@ function isInssOff(date: Date, holidays: Set<string>): boolean {
 function lastBankingDays(year: number, month: number, count: number): Date[] {
   const holidays = holidaySet(year - 1, year);
   const dates: Date[] = [];
-  const cursor = new Date(year, month + 1, 0);
+  const cursor = civilDate(year, month + 1, 0);
   while (dates.length < count) {
     if (!isInssOff(cursor, holidays)) dates.push(new Date(cursor));
     cursor.setDate(cursor.getDate() - 1);
@@ -212,7 +212,7 @@ function lastBankingDays(year: number, month: number, count: number): Date[] {
 function firstBankingDays(year: number, month: number, count: number): Date[] {
   const holidays = holidaySet(year, year + 1);
   const dates: Date[] = [];
-  const cursor = new Date(year, month, 1);
+  const cursor = civilDate(year, month, 1);
   while (dates.length < count) {
     if (!isInssOff(cursor, holidays)) dates.push(new Date(cursor));
     cursor.setDate(cursor.getDate() + 1);

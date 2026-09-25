@@ -42,7 +42,7 @@ export function HeaderMenu<T extends string | number>({
   const menuRef = useRef<HTMLUListElement>(null);
   const activeRef = useRef<HTMLButtonElement>(null);
   const dragged = useRef(false);
-  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0, maxH: 216 });
 
   useEffect(() => {
     if (!open) return;
@@ -50,26 +50,48 @@ export function HeaderMenu<T extends string | number>({
     function place() {
       const box = buttonRef.current?.getBoundingClientRect();
       if (!box) return;
-      setPos({ top: box.bottom + 6, left: box.left, width: box.width });
+      const frame =
+        document.querySelector(".cal-app")?.getBoundingClientRect() ??
+        ({ top: 0, bottom: window.innerHeight, left: 0, right: window.innerWidth } as DOMRect);
+      const gap = 6;
+      const pad = 10;
+      const cap = 13.5 * 16;
+      const below = frame.bottom - box.bottom - gap - pad;
+      const above = box.top - frame.top - gap - pad;
+      const openUp = below < 136 && above > below;
+      const maxH = Math.min(cap, Math.max(64, openUp ? above : below));
+      const top = openUp ? box.top - gap - maxH : box.bottom + gap;
+      const width = Math.max(box.width, 8);
+      let left = box.left;
+      if (left + width > frame.right - 6) left = Math.max(frame.left + 6, frame.right - 6 - width);
+      if (left < frame.left + 6) left = frame.left + 6;
+      setPos({ top, left, width, maxH });
     }
-    if (fixed) place();
     function onDoc(event: MouseEvent) {
-      if (!rootRef.current?.contains(event.target as Node)) onClose();
+      if (!rootRef.current?.contains(event.target as Node) && !menuRef.current?.contains(event.target as Node)) {
+        onClose();
+      }
     }
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") onClose();
     }
     document.addEventListener("mousedown", onDoc);
     document.addEventListener("keydown", onKey);
+    let id = 0;
     if (fixed) {
+      place();
+      id = window.requestAnimationFrame(place);
       window.addEventListener("resize", place);
       window.addEventListener("scroll", place, true);
     }
     return () => {
       document.removeEventListener("mousedown", onDoc);
       document.removeEventListener("keydown", onKey);
-      window.removeEventListener("resize", place);
-      window.removeEventListener("scroll", place, true);
+      if (fixed) {
+        window.cancelAnimationFrame(id);
+        window.removeEventListener("resize", place);
+        window.removeEventListener("scroll", place, true);
+      }
     };
   }, [open, onClose, fixed]);
 
@@ -102,8 +124,16 @@ export function HeaderMenu<T extends string | number>({
     }
 
     function onWheel(event: WheelEvent) {
+      if (!el.contains(event.target as Node)) return;
       event.preventDefault();
+      event.stopImmediatePropagation();
       go(target + event.deltaY * 0.38);
+    }
+
+    function onTouchMove(event: TouchEvent) {
+      if (!el.contains(event.target as Node)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
     }
 
     let startY = 0;
@@ -143,6 +173,7 @@ export function HeaderMenu<T extends string | number>({
         }
       }
       event.preventDefault();
+      event.stopImmediatePropagation();
       go(startScroll - dy);
     }
 
@@ -164,14 +195,16 @@ export function HeaderMenu<T extends string | number>({
       }
     }
 
-    el.addEventListener("wheel", onWheel, { passive: false });
+    document.addEventListener("wheel", onWheel, { capture: true, passive: false });
+    document.addEventListener("touchmove", onTouchMove, { capture: true, passive: false });
     el.addEventListener("pointerdown", onPointerDown);
     el.addEventListener("pointermove", onPointerMove);
     el.addEventListener("pointerup", onPointerUp);
     el.addEventListener("pointercancel", onPointerUp);
     return () => {
       if (raf) cancelAnimationFrame(raf);
-      el.removeEventListener("wheel", onWheel);
+      document.removeEventListener("wheel", onWheel, true);
+      document.removeEventListener("touchmove", onTouchMove, true);
       el.removeEventListener("pointerdown", onPointerDown);
       el.removeEventListener("pointermove", onPointerMove);
       el.removeEventListener("pointerup", onPointerUp);
@@ -202,7 +235,11 @@ export function HeaderMenu<T extends string | number>({
           role="listbox"
           aria-label={label}
           className={cn("cal-pick-menu", wide ? "is-wide" : "is-narrow", fixed && "is-fixed", soft && "is-soft")}
-          style={fixed ? { top: pos.top, left: pos.left, minWidth: Math.max(pos.width, 192) } : undefined}
+          style={
+            fixed
+              ? { top: pos.top, left: pos.left, width: Math.max(pos.width, 8), maxHeight: pos.maxH }
+              : undefined
+          }
         >
           {options.map((option) => (
             <li key={String(option.value)}>
