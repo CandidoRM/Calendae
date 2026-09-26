@@ -7,7 +7,7 @@ import { tsePresidentSecondRound } from "@/lib/elections-tse";
 import { CONFIRMED_FGTS, parseFgtsCalendar } from "@/lib/fgts";
 import { CONFIRMED_IRPF, CONFIRMED_IRPF_LOTS, parseIrpfDeadline, parseIrpfLots } from "@/lib/irpf";
 import { CONFIRMED_PIS, parsePisCalendar, standingPisMap } from "@/lib/pis";
-import type { InssYearTable } from "@/lib/inss";
+import { parseMoonFestivalHtml } from "@/lib/moon-festival";
 
 export type GoogleMonthResult = {
   ok: boolean;
@@ -522,6 +522,21 @@ function parseInssHtml(html: string, year: number): InssYearTable | null {
 }
 
 export type InssFetch = { table: InssYearTable | null; live: boolean };
+
+export const confirmMoonFestival = createServerFn({ method: "GET" })
+  .validator(z.object({ year: z.number().int().min(1).max(9999) }))
+  .handler(async ({ data }): Promise<{ iso: string | null }> => {
+    try {
+      const res = await fetch("https://en.wikipedia.org/api/rest_v1/page/html/Mid-Autumn_Festival", {
+        signal: AbortSignal.timeout(3500),
+        headers: { accept: "text/html" },
+      });
+      if (!res.ok) return { iso: null };
+      return { iso: parseMoonFestivalHtml(await res.text(), data.year) };
+    } catch {
+      return { iso: null };
+    }
+  });
 
 export const getInssCalendar = createServerFn({ method: "GET" })
   .validator(z.object({ year: z.number().int().min(1).max(9999) }))

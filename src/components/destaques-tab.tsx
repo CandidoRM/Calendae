@@ -19,6 +19,10 @@ function rowTitle(event: CalEvent): string {
 function rowTag(event: CalEvent): string | null {
   if (event.holidayKind === "election" || event.holidayKind === "enem") return `(${event.title})`;
   if (event.holidayKind === "season") return "(estação)";
+  if (event.holidayKind === "lunar") {
+    if (!event.title.startsWith("Eclipse")) return "(lunar)";
+    return event.place?.startsWith("Parcial") ? "(parcial)" : "(total)";
+  }
   return null;
 }
 
@@ -40,12 +44,14 @@ type DestaquesTabProps = {
   electionSecondRound: boolean;
   enem: boolean;
   seasons: boolean;
+  lunar: boolean;
   electionPlace: string;
   electionZone: string;
   onToggleElections: (on: boolean) => void;
   onToggleSecondRound: (on: boolean) => void;
   onToggleEnem: (on: boolean) => void;
   onToggleSeasons: (on: boolean) => void;
+  onToggleLunar: (on: boolean) => void;
   onElectionPlace: (value: string) => void;
   onElectionZone: (value: string) => void;
   onOpen: (event: CalEvent) => void;
@@ -61,12 +67,14 @@ export function DestaquesTab({
   electionSecondRound,
   enem,
   seasons,
+  lunar,
   electionPlace,
   electionZone,
   onToggleElections,
   onToggleSecondRound,
   onToggleEnem,
   onToggleSeasons,
+  onToggleLunar,
   onElectionPlace,
   onElectionZone,
   onOpen,
@@ -81,7 +89,7 @@ export function DestaquesTab({
     .sort((a, b) => a.iso.localeCompare(b.iso) || a.title.localeCompare(b.title));
 
   return (
-    <section className="cal-tab">
+    <section className="cal-tab" data-cal-tab="destaques">
       <div className="cal-tab-head">
         <h2 className="cal-tab-title">Destaques</h2>
         <Button
@@ -97,7 +105,7 @@ export function DestaquesTab({
           <CalendarGlyph className="size-5" flash={glyphFlash} />
         </Button>
       </div>
-      <A11yHint>Eleição, ENEM e estações. Não são feriado.</A11yHint>
+      <A11yHint>Eleição, ENEM, estações e Lua. Não são feriado.</A11yHint>
       {adding ? (
         <div className="cal-holiday-opts mt-3 flex flex-col border-t border-line pt-3">
           <button
@@ -173,6 +181,15 @@ export function DestaquesTab({
           >
             <KindMark on={seasons} />
             Estações
+          </button>
+          <button
+            type="button"
+            className="flex h-7 w-full items-center gap-3 text-left text-sm"
+            aria-pressed={lunar}
+            onClick={() => onToggleLunar(!lunar)}
+          >
+            <KindMark on={lunar} />
+            Lunar
           </button>
         </div>
       ) : null}

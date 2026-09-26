@@ -6,8 +6,12 @@ import { SHOW_TEST_SCREEN } from "@/lib/test-screen";
 
 export const Route = createFileRoute("/")({ component: Home });
 
+const TEST_ROUND = 3;
+
 function Home() {
-  const [tests, setTests] = useState(SHOW_TEST_SCREEN);
-  if (tests) return <TestScreen onContinue={() => setTests(false)} />;
+  const [seen, setSeen] = useState(0);
+  if (SHOW_TEST_SCREEN && seen < TEST_ROUND) {
+    return <TestScreen onContinue={() => setSeen(TEST_ROUND)} />;
+  }
   return <Calendae />;
 }

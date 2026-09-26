@@ -10,6 +10,7 @@ import {
   fromIso,
   isNational,
   nationalAka,
+  observanceYear,
   officialHolidayTitle,
   uniqueEvents,
   weekdayName,
@@ -34,18 +35,23 @@ function holidayKindLabel(event: CalEvent): string | null {
   return null;
 }
 
+function withStarted(label: string, event: CalEvent): string {
+  const year = observanceYear(event.title);
+  return year ? `${label} (${year})` : label;
+}
+
 function holidayTypeName(event: CalEvent): string {
   if (event.holidayKind === "municipal") return event.place || "Municipal";
   if (event.holidayKind === "commemorative") {
-    return commemorativeAka(event.title) ?? nationalAka(event.title) ?? "Comemorativo";
+    return withStarted(commemorativeAka(event.title) ?? nationalAka(event.title) ?? "Comemorativo", event);
   }
   if (event.holidayKind === "facultative" || facultativeName(event.title)) {
-    return facultativeAka(event.title) ?? "Ponto facultativo";
+    return withStarted(facultativeAka(event.title) ?? "Ponto facultativo", event);
   }
   if (event.holidayKind === "election") return "Eleitoral";
   if (event.holidayKind === "enem") return event.confirmed ? "Confirmado" : "Previsto";
   if (event.holidayKind === "season") return event.place || "Estação";
-  return nationalAka(event.title) ?? "Histórico";
+  return withStarted(nationalAka(event.title) ?? "Histórico", event);
 }
 
 function holidayTitle(event: CalEvent): string {
@@ -215,7 +221,7 @@ export function HolidaysTab({
       : null;
 
   return (
-    <section className="cal-tab">
+    <section className="cal-tab" data-cal-tab="holidays">
       <div className="cal-tab-head">
         <h2 className="cal-tab-title">Feriados</h2>
         <Button

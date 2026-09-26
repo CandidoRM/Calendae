@@ -126,7 +126,7 @@ export function SettingsPanel({
   const [hourMenu, setHourMenu] = useState(false);
 
   return (
-    <div className="fixed inset-0 z-40 flex flex-col bg-bg/96 px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] text-fg backdrop-blur-sm">
+    <div className="cal-settings fixed inset-0 z-40 flex flex-col px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] text-fg">
       <div className="mx-auto flex w-full max-w-[390px] flex-1 flex-col overflow-hidden">
         <div className="mb-2 flex items-center justify-between">
           <h2 className="font-display text-[2.25rem] italic leading-none">Ajustes</h2>
@@ -254,53 +254,62 @@ export function SettingsPanel({
                 hint="12h com am/pm, ou 24h. Vale no campo e na lista."
                 bodyClassName="relative pb-1 pt-1.5"
               >
-                <HeaderMenu
-                  label="Formato de horas"
-                  value={hourCycle}
-                  options={[
-                    { value: "12", label: "12h" },
-                    { value: "24", label: "24h" },
-                  ]}
-                  open={hourMenu}
-                  buttonClassName="cal-week-btn"
-                  optionClassName="cal-week-option"
-                  onOpen={() => {
-                    setWeekMenu(false);
-                    setHourMenu(true);
-                  }}
-                  onClose={() => setHourMenu(false)}
-                  onPick={(next) => {
-                    onHourCycle(next);
-                    setHourMenu(false);
-                  }}
-                />
+                <div className="cal-kind-pick">
+                  <HeaderMenu
+                    label="Formato de horas"
+                    value={hourCycle}
+                    options={[
+                      { value: "12", label: "12h" },
+                      { value: "24", label: "24h" },
+                    ]}
+                    open={hourMenu}
+                    wide
+                    fixed
+                    soft
+                    buttonClassName="cal-kind-btn is-center"
+                    optionClassName="cal-kind-option"
+                    onOpen={() => {
+                      setWeekMenu(false);
+                      setHourMenu(true);
+                    }}
+                    onClose={() => setHourMenu(false)}
+                    onPick={(next) => {
+                      onHourCycle(next);
+                      setHourMenu(false);
+                    }}
+                  />
+                </div>
               </Aba>
               <Aba
                 title="Início da Semana"
                 hint="Escolha se a primeira coluna da grade é domingo ou segunda."
                 bodyClassName="relative pb-1 pt-1.5"
               >
-                <HeaderMenu
-                  label="Início da semana"
-                  value={weekStart}
-                  options={[
-                    { value: "sunday", label: "Domingo" },
-                    { value: "monday", label: "Segunda-feira" },
-                  ]}
-                  open={weekMenu}
-                  wide
-                  buttonClassName="cal-week-btn"
-                  optionClassName="cal-week-option"
-                  onOpen={() => {
-                    setHourMenu(false);
-                    setWeekMenu(true);
-                  }}
-                  onClose={() => setWeekMenu(false)}
-                  onPick={(next) => {
-                    onWeekStart(next);
-                    setWeekMenu(false);
-                  }}
-                />
+                <div className="cal-kind-pick">
+                  <HeaderMenu
+                    label="Início da semana"
+                    value={weekStart}
+                    options={[
+                      { value: "sunday", label: "Domingo" },
+                      { value: "monday", label: "Segunda-feira" },
+                    ]}
+                    open={weekMenu}
+                    wide
+                    fixed
+                    soft
+                    buttonClassName="cal-kind-btn overflow-hidden text-ellipsis whitespace-nowrap"
+                    optionClassName="cal-kind-option"
+                    onOpen={() => {
+                      setHourMenu(false);
+                      setWeekMenu(true);
+                    }}
+                    onClose={() => setWeekMenu(false)}
+                    onPick={(next) => {
+                      onWeekStart(next);
+                      setWeekMenu(false);
+                    }}
+                  />
+                </div>
               </Aba>
               <Aba
                 title="Diferenciar Dias Úteis"

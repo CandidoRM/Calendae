@@ -1,4 +1,5 @@
 import { civilDate, easterDate, toIso, type CalEvent } from "@/lib/calendar";
+import { moonFestivalEvent } from "@/lib/moon-festival";
 import { worldCupDates } from "@/lib/world-cup";
 
 function nthWeekday(year: number, month: number, weekday: number, nth: number): string {
@@ -40,5 +41,6 @@ export function commemorativeDates(year: number): CalEvent[] {
       holidayKind: "commemorative" as const,
     })),
     ...worldCupDates(year),
+    moonFestivalEvent(year),
   ];
 }

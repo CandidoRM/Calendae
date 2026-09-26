@@ -1,3 +1,4 @@
+import { useRef, type PointerEvent as ReactPointerEvent } from "react";
 import { cn } from "@/lib/utils";
 import {
   cellLook,
@@ -17,6 +18,7 @@ type MonthGridProps = {
   sundayTint: boolean;
   holidayTint: boolean;
   onSelect: (iso: string) => void;
+  onHold?: (iso: string) => void;
 };
 
 export function MonthGrid({
@@ -29,7 +31,43 @@ export function MonthGrid({
   sundayTint,
   holidayTint,
   onSelect,
+  onHold,
 }: MonthGridProps) {
+  const held = useRef<string | null>(null);
+  const press = useRef<number | null>(null);
+
+  function clearPress() {
+    if (press.current != null) window.clearTimeout(press.current);
+    press.current = null;
+  }
+
+  function holdStart(iso: string, event: ReactPointerEvent<HTMLButtonElement>) {
+    if (!onHold || event.button !== 0) return;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    clearPress();
+    press.current = window.setTimeout(() => {
+      press.current = null;
+      held.current = iso;
+      onHold(iso);
+    }, 1000);
+    const move = (next: PointerEvent) => {
+      if (Math.hypot(next.clientX - startX, next.clientY - startY) > 12) {
+        clearPress();
+        window.removeEventListener("pointermove", move);
+      }
+    };
+    const up = () => {
+      clearPress();
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+  }
+
   return (
     <div className="cal-month-grid">
       {weekLabels(weekStart).map((label, i) => (
@@ -56,7 +94,14 @@ export function MonthGrid({
               `sq-${look.square}`,
               `nm-${look.num}`,
             )}
+            onPointerDown={(event) => holdStart(cell.iso, event)}
+            onSelectStart={(event) => event.preventDefault()}
+            onContextMenu={(event) => event.preventDefault()}
             onClick={() => {
+              if (held.current === cell.iso) {
+                held.current = null;
+                return;
+              }
               onSelect(cell.iso);
             }}
           >

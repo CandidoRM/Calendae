@@ -46,6 +46,25 @@ export function splitContact(raw: string): { name: string; phone: string; digits
   return { name: trimmed, phone: "", digits: "" };
 }
 
+/** Tira do texto a primeira sequência que parece telefone (10 a 15 dígitos). */
+export function pullPhone(raw: string): { name: string; phone: string } | null {
+  const re = /(?:\+|00)?[\d(][\d\s().-]{7,}\d/g;
+  for (const match of raw.matchAll(re)) {
+    const digits = match[0].replace(/\D/g, "").replace(/^00/, "");
+    const local =
+      digits.startsWith("55") && (digits.length === 12 || digits.length === 13) ? digits.slice(2) : digits;
+    if (local.length < 10 || local.length > 15) continue;
+    const index = match.index ?? 0;
+    const name = `${raw.slice(0, index)}${raw.slice(index + match[0].length)}`
+      .replace(/\s{2,}/g, " ")
+      .replace(/^[\s,;|/.-]+|[\s,;|/.-]+$/g, "")
+      .trim();
+    const phone = local.length === 10 || local.length === 11 ? formatBrPhone(local) : `+${local}`;
+    return { name, phone };
+  }
+  return null;
+}
+
 function brLocal(digits: string): string | null {
   const clean = digits.replace(/\D/g, "");
   if (clean.startsWith("55") && (clean.length === 12 || clean.length === 13)) return clean.slice(2);

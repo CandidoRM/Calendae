@@ -55,6 +55,11 @@ function seasonInstant(year: number, which: 0 | 1 | 2 | 3): Date {
   return new Date((jde - 2440587.5) * 86400000);
 }
 
+/** Equinócio de setembro: outono no norte, primavera no sul. */
+export function septemberEquinox(year: number): Date {
+  return seasonInstant(year, 2);
+}
+
 function brasiliaIso(date: Date): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Sao_Paulo",

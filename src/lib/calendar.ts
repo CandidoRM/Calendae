@@ -1,6 +1,6 @@
 export type EventKind = "semanal" | "mensal" | "semestral" | "anual" | "personalizado" | "posicao";
 export type EventSource = "local" | "holiday" | "google" | "birthday" | "benefit" | "bill" | "boleto" | "period" | "irpf" | "pis" | "ipva" | "fgts" | "bolsa" | "gas" | "licenca";
-export type HolidayKind = "national" | "municipal" | "commemorative" | "election" | "facultative" | "enem" | "season";
+export type HolidayKind = "national" | "municipal" | "commemorative" | "election" | "facultative" | "enem" | "season" | "lunar";
 export type MonthSide = "primeiros" | "ultimos";
 export type IntervalRule = "ignorar" | "preceder" | "proceder" | "adiar" | "cancelar";
 
@@ -11,6 +11,7 @@ export type CalEvent = {
   time?: string;
   place?: string;
   contact?: string;
+  note?: string;
   kind?: EventKind;
   everyDays?: number;
   monthSide?: MonthSide;
@@ -77,6 +78,7 @@ export type Settings = {
   enem: boolean;
   irpfOn: boolean;
   seasons: boolean;
+  lunar: boolean;
   hourCycle: HourCycle;
   electionSecondRound: boolean;
   electionSecondTriedYear: number | null;
@@ -123,6 +125,7 @@ export const DEFAULT_SETTINGS: Settings = {
   enem: false,
   irpfOn: true,
   seasons: true,
+  lunar: false,
   hourCycle: "12",
   electionSecondRound: false,
   electionSecondTriedYear: null,
@@ -708,7 +711,7 @@ export function isFacultative(event: CalEvent): boolean {
 
 export function isNational(event: CalEvent): boolean {
   if (event.source !== "holiday") return false;
-  if (isFacultative(event) || isCommemorative(event) || isElection(event) || event.holidayKind === "enem" || event.holidayKind === "season") return false;
+  if (isFacultative(event) || isCommemorative(event) || isElection(event) || event.holidayKind === "enem" || event.holidayKind === "season" || event.holidayKind === "lunar") return false;
   if (event.holidayKind === "municipal") return false;
   return event.holidayKind === "national" || event.holidayKind === undefined;
 }
@@ -723,7 +726,7 @@ export function isEnem(event: CalEvent): boolean {
 
 export function officeHolidayLabel(event: CalEvent): "Feriado Nacional" | "Feriado Municipal" | null {
   if (event.source !== "holiday") return null;
-  if (isFacultative(event) || isCommemorative(event) || isElection(event) || event.holidayKind === "enem" || event.holidayKind === "season") return null;
+  if (isFacultative(event) || isCommemorative(event) || isElection(event) || event.holidayKind === "enem" || event.holidayKind === "season" || event.holidayKind === "lunar") return null;
   if (event.holidayKind === "municipal") return "Feriado Municipal";
   if (event.holidayKind === "national" || event.holidayKind === undefined) return "Feriado Nacional";
   return null;
@@ -770,7 +773,7 @@ export function isBoleto(event: CalEvent): boolean {
 }
 
 export function isAgendaMark(event: CalEvent): boolean {
-  return event.source === "local" || event.source === "google" || event.source === "birthday";
+  return event.source === "local" || event.source === "google";
 }
 
 /** Traço na grade: só a data (e o intervalo, se houver). Duração nunca pinta dia extra. */
@@ -854,7 +857,7 @@ export function archiveEvent(event: CalEvent): CalEvent {
 
 export function eventTab(event: CalEvent): CalTabId | null {
   if (event.source === "holiday") {
-    if (event.holidayKind === "election" || event.holidayKind === "enem" || event.holidayKind === "season") return "destaques";
+    if (event.holidayKind === "election" || event.holidayKind === "enem" || event.holidayKind === "season" || event.holidayKind === "lunar") return "destaques";
     return "holidays";
   }
   if (event.source === "birthday") return "birthdays";
@@ -875,8 +878,25 @@ export function mergeEventsById(base: CalEvent[], extra: CalEvent[]): CalEvent[]
   return add.length ? [...base, ...add] : base;
 }
 
-export type CellSquare = "today" | "election" | "holiday" | "overdue" | "none";
-export type CellNum = "pay" | "bill" | "ir" | "holiday" | "commemorative" | "election" | "enem" | "season" | "today" | "white" | "fg";
+export type CellSquare = "today" | "election" | "holiday" | "overdue" | "birthday" | "none";
+export type CellNum =
+  | "pay"
+  | "bill"
+  | "ir"
+  | "holiday"
+  | "commemorative"
+  | "election"
+  | "enem"
+  | "season"
+  | "lunar"
+  | "moon-new"
+  | "moon-wax"
+  | "moon-full"
+  | "moon-wane"
+  | "eclipse"
+  | "today"
+  | "white"
+  | "fg";
 
 export function cellLook(
   cell: CalCell,
@@ -893,23 +913,34 @@ export function cellLook(
   const election = holidayTint && cell.events.some(isElection);
   const enem = cell.events.some(isEnem);
   const season = cell.events.some((event) => event.holidayKind === "season");
+  const lunar = cell.events.find((event) => event.holidayKind === "lunar" && !event.title.startsWith("Eclipse"));
+  const eclipse = cell.events.some((event) => event.holidayKind === "lunar" && event.title.startsWith("Eclipse"));
   const payment = cell.events.some(isPayment);
   const bill = cell.events.some(isBill) || cell.events.some(isBoleto) || cell.events.some(isIpva) || cell.events.some(isLicenca);
   const overdue = Boolean(today) && bill && cell.iso < today;
+  const birthday = cell.events.some((event) => event.source === "birthday");
   const dow = fromIso(cell.iso).getDay();
   const weekend = (saturdayTint && dow === 6) || (sundayTint && dow === 0);
 
   let square: CellSquare = "none";
-  if (cell.isToday) square = "today";
+  if (cell.isToday && birthday) square = "birthday";
+  else if (cell.isToday) square = "today";
   else if (overdue) square = "overdue";
   else if (election) square = "election";
   else if (off) square = "holiday";
+  else if (birthday) square = "birthday";
 
   let num: CellNum = "fg";
   if (payment) num = "pay";
   else if (bill) num = "bill";
   else if (enem) num = "enem";
   else if (season) num = "season";
+  else if (eclipse) num = "eclipse";
+  else if (lunar?.title === "Lua nova") num = "moon-new";
+  else if (lunar?.title === "Quarto crescente") num = "moon-wax";
+  else if (lunar?.title === "Lua cheia") num = "moon-full";
+  else if (lunar?.title === "Quarto minguante") num = "moon-wane";
+  else if (lunar) num = "lunar";
   else if (off) num = "holiday";
   else if (commemorative) num = "commemorative";
   else if (facultative) num = "holiday";
@@ -917,7 +948,7 @@ export function cellLook(
   else if (weekend && cell.inMonth) num = "holiday";
   else if (cell.isToday) num = "today";
 
-  if (selected && (square === "today" || square === "holiday" || square === "election")) {
+  if (selected && (square === "today" || square === "holiday" || square === "election" || square === "birthday")) {
     num = "white";
   }
 
@@ -1030,6 +1061,53 @@ export function nationalAka(title: string): string | null {
   return NATIONAL_AKA_RULES.find((row) => row.test(n))?.aka ?? null;
 }
 
+/** Ano estimado em que a data começou a ser comemorada. Municipal fica de fora. */
+const OBSERVANCE_YEAR: { test: (n: string) => boolean; year: number }[] = [
+  { test: (n) => n.includes("vespera") && n.includes("natal"), year: 336 },
+  { test: (n) => n.includes("vespera") && (n.includes("ano") || n.includes("reveillon")), year: 1582 },
+  { test: (n) => n.includes("confraternizacao") || n.includes("ano novo") || n.includes("new year"), year: 1949 },
+  { test: (n) => n.includes("paixao") || (n.includes("sexta") && n.includes("santa")) || n.includes("good friday"), year: 325 },
+  { test: (n) => n.includes("tiradentes") || n.includes("inconfidencia"), year: 1890 },
+  { test: (n) => n.includes("trabalho") || n.includes("trabalhador"), year: 1924 },
+  { test: (n) => n.includes("independencia") || n.includes("patria"), year: 1822 },
+  { test: (n) => n.includes("aparecida") || n.includes("padroeira"), year: 1717 },
+  { test: (n) => n.includes("finados") || n.includes("dia dos mortos"), year: 998 },
+  { test: (n) => n.includes("proclamacao") || n.includes("republica"), year: 1889 },
+  { test: (n) => n.includes("consciencia negra") || n.includes("zumbi"), year: 1971 },
+  { test: (n) => n.includes("natal") || n.includes("nascimento de cristo") || n.includes("christmas"), year: 336 },
+  { test: (n) => n.includes("carnaval") || n.includes("momo"), year: 1723 },
+  { test: (n) => n.includes("cinzas") || n.includes("quaresma"), year: 1091 },
+  { test: (n) => n.includes("corpus"), year: 1264 },
+  { test: (n) => n.includes("servidor") || n.includes("funcionario publico"), year: 1943 },
+  { test: (n) => n.includes("reis") || n.includes("epifania"), year: 361 },
+  { test: (n) => n.includes("mulher"), year: 1911 },
+  { test: (n) => n.includes("mentira") || n.includes("bobos") || n.includes("april fool"), year: 1582 },
+  { test: (n) => n.includes("pascoa") || n.includes("ressurreicao") || n.includes("easter"), year: 325 },
+  { test: (n) => n.includes("indigena") || n.includes("indio"), year: 1943 },
+  { test: (n) => n.includes("descobrimento") || n.includes("cabral"), year: 1500 },
+  { test: (n) => n.includes("maes") || n.includes("maternidade"), year: 1932 },
+  { test: (n) => n.includes("abolicao") || n.includes("escrav"), year: 1888 },
+  { test: (n) => n.includes("namorado") || n.includes("dia do amor"), year: 1949 },
+  { test: (n) => n.includes("santo antonio") || n.includes("casamenteiro"), year: 1232 },
+  { test: (n) => n.includes("sao joao") || n.includes("joao batista"), year: 400 },
+  { test: (n) => n.includes("lgbt") || n.includes("orgulho"), year: 1970 },
+  { test: (n) => n.includes("sao pedro") || n.includes("pedro e paulo"), year: 258 },
+  { test: (n) => n.includes("paternidade") || n.includes(" dia dos pais") || n.endsWith("pais"), year: 1953 },
+  { test: (n) => n.includes("estudante") || n.includes("aluno"), year: 1827 },
+  { test: (n) => n.includes("folclore"), year: 1846 },
+  { test: (n) => n.includes("arvore"), year: 1965 },
+  { test: (n) => n.includes("crianca"), year: 1925 },
+  { test: (n) => n.includes("professor") || n.includes("mestre"), year: 1963 },
+  { test: (n) => n.includes("halloween") || n.includes("bruxas"), year: 835 },
+  { test: (n) => n.includes("festival da lua") || n.includes("meio-outono") || n.includes("meio outono"), year: 618 },
+  { test: (n) => n.includes("copa") || n.includes("brasil x"), year: 1930 },
+];
+
+export function observanceYear(title: string): number | null {
+  const n = foldName(title);
+  return OBSERVANCE_YEAR.find((row) => row.test(n))?.year ?? null;
+}
+
 const FACULTATIVE_AKA_RULES: { test: (n: string) => boolean; aka: string }[] = [
   { test: (n) => n.includes("carnaval") || n.includes("momo"), aka: "Folia de Momo" },
   { test: (n) => n.includes("cinzas"), aka: "Quaresma" },
@@ -1064,6 +1142,7 @@ const COMMEMORATIVE_AKA_RULES: { test: (n: string) => boolean; aka: string }[] =
   { test: (n) => n.includes("arvore"), aka: "Dia Nacional da Árvore" },
   { test: (n) => n.includes("professor") || n.includes("mestre"), aka: "Dia do Mestre" },
   { test: (n) => n.includes("halloween") || n.includes("bruxas"), aka: "Dia das Bruxas" },
+  { test: (n) => n.includes("festival da lua") || n.includes("meio-outono") || n.includes("meio outono"), aka: "Festival do Meio-Outono" },
 ];
 
 export function commemorativeAka(title: string): string | null {

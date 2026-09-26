@@ -190,7 +190,7 @@ export function FinancesTab({
   }, [adding]);
 
   return (
-    <section className="cal-tab">
+    <section className="cal-tab" data-cal-tab="finance">
       <div className="cal-tab-head">
         <h2 className="cal-tab-title">Finanças</h2>
         <Button

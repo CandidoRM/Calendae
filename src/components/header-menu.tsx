@@ -42,10 +42,46 @@ export function HeaderMenu<T extends string | number>({
   const menuRef = useRef<HTMLUListElement>(null);
   const activeRef = useRef<HTMLButtonElement>(null);
   const dragged = useRef(false);
+  const lit = useRef(value);
+  const settled = useRef(false);
+  const valueRef = useRef(value);
+  const onPickRef = useRef(onPick);
+  const onCloseRef = useRef(onClose);
+  const optionsRef = useRef(options);
+  const opened = useRef(false);
+  valueRef.current = value;
+  onPickRef.current = onPick;
+  onCloseRef.current = onClose;
+  optionsRef.current = options;
   const [pos, setPos] = useState({ top: 0, left: 0, width: 0, maxH: 216 });
 
+  function valueFrom(node: Element | null) {
+    const button = node?.closest("button[role='option']") as HTMLButtonElement | null;
+    if (!button) return null;
+    const raw = button.getAttribute("data-value");
+    if (raw == null) return null;
+    const found = optionsRef.current.find((option) => String(option.value) === raw);
+    return found ? found.value : null;
+  }
+
+  function commit() {
+    if (settled.current) return;
+    settled.current = true;
+    const next = lit.current;
+    if (next !== valueRef.current) onPickRef.current(next);
+    onCloseRef.current();
+  }
+
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      opened.current = false;
+      return;
+    }
+    if (!opened.current) {
+      lit.current = value;
+      settled.current = false;
+      opened.current = true;
+    }
     if (!fixed) activeRef.current?.scrollIntoView({ block: "nearest" });
     function place() {
       const box = buttonRef.current?.getBoundingClientRect();
@@ -69,11 +105,11 @@ export function HeaderMenu<T extends string | number>({
     }
     function onDoc(event: MouseEvent) {
       if (!rootRef.current?.contains(event.target as Node) && !menuRef.current?.contains(event.target as Node)) {
-        onClose();
+        commit();
       }
     }
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") commit();
     }
     document.addEventListener("mousedown", onDoc);
     document.addEventListener("keydown", onKey);
@@ -141,11 +177,14 @@ export function HeaderMenu<T extends string | number>({
     let holding = false;
 
     function markOver(x: number, y: number) {
-      const hit = document.elementFromPoint(x, y)?.closest(".cal-month-option, .cal-year-option, .cal-kind-option");
-      el.querySelectorAll(".cal-month-option.is-over, .cal-year-option.is-over, .cal-kind-option.is-over").forEach((node) => {
-        if (node !== hit) node.classList.remove("is-over");
+      const hit = document.elementFromPoint(x, y)?.closest("button[role='option']");
+      const inside = hit && el.contains(hit) ? hit : null;
+      el.querySelectorAll(".is-over").forEach((node) => {
+        if (node !== inside) node.classList.remove("is-over");
       });
-      hit?.classList.add("is-over");
+      inside?.classList.add("is-over");
+      const next = valueFrom(inside);
+      if (next != null) lit.current = next;
     }
 
     function onPointerDown(event: PointerEvent) {
@@ -188,9 +227,8 @@ export function HeaderMenu<T extends string | number>({
       }
       dragged.current = false;
       if (!wasDrag) {
-        const hit = document
-          .elementFromPoint(event.clientX, event.clientY)
-          ?.closest("button[role='option']") as HTMLButtonElement | null;
+        const point = document.elementFromPoint(event.clientX, event.clientY);
+        const hit = point?.closest("button[role='option']") as HTMLButtonElement | null;
         if (hit && el.contains(hit)) hit.click();
       }
     }
@@ -224,7 +262,7 @@ export function HeaderMenu<T extends string | number>({
         disabled={disabled}
         onClick={() => {
           if (disabled) return;
-          open ? onClose() : onOpen();
+          open ? commit() : onOpen();
         }}
       >
         {options.find((option) => option.value === value)?.label ?? String(value)}
@@ -248,16 +286,21 @@ export function HeaderMenu<T extends string | number>({
                 type="button"
                 role="option"
                 aria-selected={option.value === value}
+                data-value={String(option.value)}
                 className={cn(
                   "cal-pick-option",
                   optionClassName,
                   option.value === value && "is-active",
                 )}
+                onMouseEnter={() => {
+                  lit.current = option.value;
+                }}
                 onClick={() => {
                   if (dragged.current) {
                     dragged.current = false;
                     return;
                   }
+                  settled.current = true;
                   onPick(option.value);
                 }}
               >

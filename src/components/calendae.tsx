@@ -43,6 +43,7 @@ import {
   lastVisibleIso,
   mergeEventsById,
   eventMatchesIso,
+  eventTab,
   minutesToTime,
   newEventId,
   intervalFollow,
@@ -74,9 +75,15 @@ import {
 } from "@/lib/calendar";
 import { inssPayIso, parseNb, rememberInssTable, type InssYearTable } from "@/lib/inss";
 import { commemorativeDates } from "@/lib/commemorative";
+import {
+  markMoonFestivalTried,
+  moonFestivalTriedYear,
+  rememberMoonFestival,
+} from "@/lib/moon-festival";
 import { electionDates, firstRoundIso, secondRoundIso } from "@/lib/elections";
 import { enemDates } from "@/lib/enem";
 import { seasonDates } from "@/lib/seasons";
+import { lunarDates } from "@/lib/lunar";
 import {
   dayAfter,
   ensureAlmanac,
@@ -142,6 +149,7 @@ function readSettings(): Settings {
       enem: Boolean(parsed.enem),
       irpfOn: parsed.irpfOn !== false,
       seasons: parsed.seasons !== false,
+      lunar: parsed.lunar === true,
       hourCycle: parsed.hourCycle === "24" ? "24" : "12",
       electionSecondRound: Boolean(parsed.electionSecondRound),
       electionSecondTriedYear:
@@ -786,6 +794,7 @@ export function Calendae() {
   const [openGasId, setOpenGasId] = useState<string | null>(null);
   const [openLicencaId, setOpenLicencaId] = useState<string | null>(null);
   const [irpfRev, setIrpfRev] = useState(0);
+  const [moonRev, setMoonRev] = useState(0);
   const [laborRev, setLaborRev] = useState(0);
   const [openHistoryId, setOpenHistoryId] = useState<string | null>(null);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
@@ -802,6 +811,7 @@ export function Calendae() {
   const agendaDraftId = useRef<string | null>(null);
   const swipeRef = useRef<HTMLElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
+  const tabFlash = useRef(0);
   const [canScrollDown, setCanScrollDown] = useState(true);
   const [canScrollUp, setCanScrollUp] = useState(false);
   const pointerStart = useRef<{ x: number; y: number } | null>(null);
@@ -1112,6 +1122,29 @@ export function Calendae() {
 
   useEffect(() => {
     if (!hydrated) return;
+    if (moonFestivalTriedYear() === todayYear) return;
+    let cancelled = false;
+    const stop = whenIdle(() => {
+      void import("@/lib/calendar-server").then(async ({ confirmMoonFestival }) => {
+        try {
+          const hit = await confirmMoonFestival({ data: { year: todayYear } });
+          if (cancelled) return;
+          if (hit.iso) rememberMoonFestival(todayYear, hit.iso, todayYear);
+          else markMoonFestivalTried(todayYear);
+          setMoonRev((n) => n + 1);
+        } catch {
+          if (!cancelled) markMoonFestivalTried(todayYear);
+        }
+      });
+    });
+    return () => {
+      cancelled = true;
+      stop();
+    };
+  }, [hydrated, todayYear]);
+
+  useEffect(() => {
+    if (!hydrated) return;
     const y = year;
     if (inssStore[String(y)]?.table) {
       rememberInssTable(y, inssStore[String(y)].table);
@@ -1150,7 +1183,7 @@ export function Calendae() {
         ...electionDates(year, true),
         ...municipalEvents,
       ]),
-    [holidayStore, year, municipalEvents],
+    [holidayStore, year, municipalEvents, moonRev],
   );
   const irpfEvent = useMemo(() => (settings.irpfOn ? irpfForYear(year) : null), [year, irpfRev, settings.irpfOn]);
   const irpfLots = useMemo(() => irpfLotsForYear(year), [year, irpfRev]);
@@ -1220,14 +1253,15 @@ export function Calendae() {
     if (settings.commemorative) list.push(...commemorativeDates(year));
     if (settings.municipal) list.push(...municipalEvents);
     return list;
-  }, [settings.commemorative, settings.municipal, municipalEvents, year]);
+  }, [settings.commemorative, settings.municipal, municipalEvents, year, moonRev]);
   const highlights = useMemo(() => {
     const list: CalEvent[] = [];
     if (settings.elections) list.push(...electionDates(year, showElectionSecond(year, settings.electionSecondRound)));
     if (settings.enem) list.push(...enemDates(year));
     if (settings.seasons) list.push(...seasonDates(year));
+    if (settings.lunar) list.push(...lunarDates(year));
     return list;
-  }, [settings.elections, settings.electionSecondRound, settings.enem, settings.seasons, year]);
+  }, [settings.elections, settings.electionSecondRound, settings.enem, settings.seasons, settings.lunar, year]);
   const benefitEvents = useMemo(() => {
     const month = view.getMonth();
     return localEvents.flatMap((event) => {
@@ -1260,7 +1294,7 @@ export function Calendae() {
   const blockedHolidays = useMemo(() => {
     const set = new Set<string>();
     for (const event of [...holidays, ...extraHolidays]) {
-      if (event.holidayKind === "election" || event.holidayKind === "enem" || event.holidayKind === "season") continue;
+      if (event.holidayKind === "election" || event.holidayKind === "enem" || event.holidayKind === "season" || event.holidayKind === "lunar") continue;
       set.add(event.iso);
     }
     return set;
@@ -1482,6 +1516,119 @@ export function Calendae() {
     setOpenBolsaId(null);
     setOpenGasId(null);
     setOpenLicencaId(null);
+  }
+
+  function scrollToTab(tab: string) {
+    window.setTimeout(() => {
+      const page = pageRef.current;
+      const node = page?.querySelector(`[data-cal-tab="${tab}"]`);
+      if (!page || !(node instanceof HTMLElement)) return;
+      const top = node.getBoundingClientRect().top - page.getBoundingClientRect().top + page.scrollTop - 8;
+      page.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+      page.querySelectorAll(".cal-tab.is-held").forEach((item) => item.classList.remove("is-held"));
+      window.clearTimeout(tabFlash.current);
+      void node.offsetWidth;
+      node.classList.add("is-held");
+      tabFlash.current = window.setTimeout(() => node.classList.remove("is-held"), 280);
+    }, 80);
+  }
+
+  function showOnly(next: {
+    event?: string;
+    holiday?: string;
+    highlight?: string;
+    birthday?: string;
+    benefit?: string;
+    bill?: string;
+    irpf?: string;
+    pis?: string;
+    ipva?: string;
+    fgts?: string;
+    bolsa?: string;
+    gas?: string;
+    licenca?: string;
+  }) {
+    setOpenEventId(next.event ?? null);
+    setOpenHolidayIso(next.holiday ?? null);
+    setOpenHighlightId(next.highlight ?? null);
+    setOpenBirthdayId(next.birthday ?? null);
+    setOpenBenefitId(next.benefit ?? null);
+    setOpenHistoryId(null);
+    setOpenBillId(next.bill ?? null);
+    setOpenIrpfId(next.irpf ?? null);
+    setOpenPisId(next.pis ?? null);
+    setOpenIpvaId(next.ipva ?? null);
+    setOpenFgtsId(next.fgts ?? null);
+    setOpenBolsaId(next.bolsa ?? null);
+    setOpenGasId(next.gas ?? null);
+    setOpenLicencaId(next.licenca ?? null);
+  }
+
+  function startAgenda(iso: string) {
+    agendaDraftId.current = null;
+    setDraftTitle("");
+    setDraftPlace("");
+    setDraftContact("");
+    setDraftTime("09:00");
+    setDraftKind(null);
+    setDraftEveryDays("");
+    setDraftMonthSide("");
+    setDraftMonthNth("");
+    setDraftMonthUtil(false);
+    setDraftIntervalRule("ignorar");
+    setDraftNotify(false);
+    setDraftDurTime("");
+    setDraftDurDays("");
+    setDraftDate(iso);
+    setKindMenu(false);
+    setSideMenu(false);
+    setRuleMenu(false);
+    setEditingEventId(null);
+    setAdding(true);
+    showOnly({});
+    scrollToTab("agenda");
+  }
+
+  function revealHeld(event: CalEvent) {
+    setAdding(false);
+    setEditingEventId(null);
+    const id = event.id;
+    const tab = eventTab(event) ?? "agenda";
+    if (event.source === "holiday") {
+      const destaque =
+        event.holidayKind === "election" || event.holidayKind === "enem" || event.holidayKind === "season" || event.holidayKind === "lunar";
+      showOnly(destaque ? { highlight: id } : { holiday: id });
+    } else if (event.source === "birthday") showOnly({ birthday: id });
+    else if (event.source === "benefit") showOnly({ benefit: id });
+    else if (event.source === "bill" || event.source === "boleto") showOnly({ bill: id });
+    else if (event.source === "irpf") showOnly({ irpf: id });
+    else if (event.source === "pis") showOnly({ pis: id });
+    else if (event.source === "ipva") showOnly({ ipva: id });
+    else if (event.source === "fgts") showOnly({ fgts: id });
+    else if (event.source === "bolsa") showOnly({ bolsa: id });
+    else if (event.source === "gas") showOnly({ gas: id });
+    else if (event.source === "licenca") showOnly({ licenca: id });
+    else showOnly({ event: id });
+    scrollToTab(tab);
+  }
+
+  function holdFromGrid(iso: string) {
+    const date = fromIso(iso);
+    if (date.getMonth() !== view.getMonth() || date.getFullYear() !== year) {
+      jumpTo(civilDate(date.getFullYear(), date.getMonth(), 1), iso);
+    } else {
+      setSelected(iso);
+    }
+    setDraftDate(iso);
+    const marked = gridEvents.filter(
+      (event) => eventMatchesIso(event, iso) && tabAllowsEvent(settings.tabs, event),
+    );
+    const chosen = marked[0];
+    if (!chosen) {
+      if (settings.tabs.agenda !== false) startAgenda(iso);
+      return;
+    }
+    revealHeld(chosen);
   }
 
   function pickCity(city: { ibge: number; name: string; uf: string }) {
@@ -1980,6 +2127,7 @@ export function Calendae() {
               sundayTint={settings.sundayTint}
               holidayTint={settings.holidayTint}
               onSelect={selectFromGrid}
+              onHold={holdFromGrid}
             />
           </section>
 
@@ -2050,6 +2198,7 @@ export function Calendae() {
             electionSecondRound={showElectionSecond(year, settings.electionSecondRound)}
             enem={settings.enem}
             seasons={settings.seasons}
+            lunar={settings.lunar}
             electionPlace={settings.electionPlace}
             electionZone={settings.electionZone}
             onToggleElections={(on) => setSettings((prev) => ({ ...prev, elections: on }))}
@@ -2063,6 +2212,7 @@ export function Calendae() {
             }}
             onToggleEnem={(on) => setSettings((prev) => ({ ...prev, enem: on }))}
             onToggleSeasons={(on) => setSettings((prev) => ({ ...prev, seasons: on }))}
+            onToggleLunar={(on) => setSettings((prev) => ({ ...prev, lunar: on }))}
             onElectionPlace={(value) => setSettings((prev) => ({ ...prev, electionPlace: value }))}
             onElectionZone={(value) => setSettings((prev) => ({ ...prev, electionZone: value }))}
             onOpen={(event) => {
@@ -2087,7 +2237,7 @@ export function Calendae() {
           ) : null}
 
           {settings.tabs.agenda ? (
-          <section className="cal-tab cal-tab-agenda">
+          <section className="cal-tab cal-tab-agenda" data-cal-tab="agenda">
             <div className="cal-tab-head">
               <h2 className="cal-tab-title">Agenda</h2>
               <Button
@@ -2532,6 +2682,7 @@ export function Calendae() {
             month={view.getMonth()}
             today={today}
             selectedIso={selected}
+            weekStart={settings.weekStart}
             openId={openBirthdayId}
             birthdays={birthdays}
             onAdd={(event) => setLocalEvents((prev) => [...prev, event])}
