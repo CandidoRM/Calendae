@@ -1,6 +1,7 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { A11yHint } from "@/components/a11y-hint";
+import { useGlyphFlash } from "@/components/calendar-glyph";
 import { Button } from "@/components/ui/button";
 import { HeaderMenu } from "@/components/header-menu";
 import { GROK_PROVIDERS, signIn } from "@/lib/auth/client";
@@ -124,6 +125,8 @@ export function SettingsPanel({
   const [tab, setTab] = useState<SettingsTab>("geral");
   const [weekMenu, setWeekMenu] = useState(false);
   const [hourMenu, setHourMenu] = useState(false);
+  const [guideFlash, pingGuide] = useGlyphFlash();
+  const guideId = useRef<SettingsTab>("geral");
 
   return (
     <div className="cal-settings fixed inset-0 z-40 flex flex-col px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] text-fg">
@@ -143,8 +146,15 @@ export function SettingsPanel({
                   key={item.id}
                   type="button"
                   aria-current={on ? "page" : undefined}
-                  className="cal-guide-btn pb-4 pt-2.5 font-display text-[1.05rem] italic leading-none"
-                  onClick={() => setTab(item.id)}
+                  className={cn(
+                    "cal-guide-btn pb-4 pt-2.5 font-display text-[1.05rem] italic leading-none",
+                    guideFlash && guideId.current === item.id && "is-flash",
+                  )}
+                  onClick={() => {
+                    guideId.current = item.id;
+                    pingGuide();
+                    setTab(item.id);
+                  }}
                 >
                   {item.label}
                 </button>
@@ -180,39 +190,6 @@ export function SettingsPanel({
                 {cloudStatus ? (
                   <p className="col-span-2 text-pretty text-sm text-muted">{cloudStatus}</p>
                 ) : null}
-              </Aba>
-              <Aba
-                title="Abas"
-                hint="Desmarque para esconder uma seção. O que você anotou continua salvo."
-                bodyClassName="grid grid-cols-[minmax(0,1fr)_8.5rem] items-center gap-x-3 gap-y-0.5"
-              >
-                {CAL_TABS.map((item, index) => (
-                  <div key={item.id} className="col-span-2">
-                    <button
-                      type="button"
-                      aria-pressed={tabs[item.id]}
-                      className={cn(
-                        "flex w-full items-center justify-between text-sm text-fg",
-                        index === 0 ? "mt-2" : "mt-1.5",
-                      )}
-                      onClick={() => onToggleTab(item.id, !tabs[item.id])}
-                    >
-                      <span className="flex h-4 items-center leading-none">{item.label}</span>
-                      <KindMark on={tabs[item.id]} />
-                    </button>
-                    <A11yHint>
-                      {item.id === "holidays"
-                        ? "Feriados e eleições saem da lista e da grade."
-                        : item.id === "agenda"
-                          ? "Compromissos saem da lista e da grade. Avisos também param."
-                          : item.id === "birthdays"
-                              ? "Aniversários saem da lista e da grade."
-                              : item.id === "finance"
-                                ? "Benefícios e contas saem da lista e da grade."
-                                : "Compromissos antigos saem da lista."}
-                    </A11yHint>
-                  </div>
-                ))}
               </Aba>
               <Aba
                 title="Acessibilidade"
@@ -348,6 +325,39 @@ export function SettingsPanel({
                 <A11yHint className="col-span-2">
                   Ligado, feriados ficam coloridos. Desligado, parecem dia comum.
                 </A11yHint>
+              </Aba>
+              <Aba
+                title="Abas"
+                hint="Desmarque para esconder uma seção. O que você anotou continua salvo."
+                bodyClassName="grid grid-cols-[minmax(0,1fr)_8.5rem] items-center gap-x-3 gap-y-0.5"
+              >
+                {CAL_TABS.map((item, index) => (
+                  <div key={item.id} className="col-span-2">
+                    <button
+                      type="button"
+                      aria-pressed={tabs[item.id]}
+                      className={cn(
+                        "flex w-full items-center justify-between text-sm text-fg",
+                        index === 0 ? "mt-2" : "mt-1.5",
+                      )}
+                      onClick={() => onToggleTab(item.id, !tabs[item.id])}
+                    >
+                      <span className="flex h-4 items-center leading-none">{item.label}</span>
+                      <KindMark on={tabs[item.id]} />
+                    </button>
+                    <A11yHint>
+                      {item.id === "holidays"
+                        ? "Feriados e eleições saem da lista e da grade."
+                        : item.id === "agenda"
+                          ? "Compromissos saem da lista e da grade. Avisos também param."
+                          : item.id === "birthdays"
+                              ? "Aniversários saem da lista e da grade."
+                              : item.id === "finance"
+                                ? "Benefícios e contas saem da lista e da grade."
+                                : "Compromissos antigos saem da lista."}
+                    </A11yHint>
+                  </div>
+                ))}
               </Aba>
             </>
           ) : null}

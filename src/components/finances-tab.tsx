@@ -35,9 +35,8 @@ function FinanceFold({
 }) {
   return (
     <div className="mt-3 border-t border-line">
-      <button type="button" onClick={onToggle} className="flex w-full items-baseline justify-between py-3 text-left">
+      <button type="button" onClick={onToggle} className="flex w-full items-baseline py-3 text-left">
         <span className="text-sm font-medium text-fg">{title}</span>
-        <span className="text-xs text-muted">{open ? "fechar" : "abrir"}</span>
       </button>
       <div className={cn("cal-event-details", open && "is-open")}>
         <div className="flex flex-col gap-3 pb-2">{children}</div>
@@ -753,10 +752,13 @@ export function FinancesTab({
             <KindMark on={irpfOn} />
             Declaração de Imposto de Renda
           </button>
+          <A11yHint>Prazo da declaração e os lotes de restituição.</A11yHint>
           <FinanceFold title="Proventos" open={proventos} onToggle={() => setProventos((open) => !open)}>
+            <A11yHint>O que entra no mês: INSS, benefícios e trabalhistas.</A11yHint>
             <div id="fin-inss" />
             <div className="flex flex-col gap-2">
               <p className="text-sm font-medium text-fg">Benefícios Sociais</p>
+              <A11yHint>Bolsa Família e Gás do Povo, pelo mesmo NIS.</A11yHint>
               <input
                 value={bolsaNis}
                 inputMode="numeric"
@@ -781,6 +783,7 @@ export function FinancesTab({
             </div>
             <div className="flex flex-col gap-2">
               <p className="text-sm font-medium text-fg">Trabalhistas</p>
+              <A11yHint>FGTS e PIS, pelo mês de nascimento.</A11yHint>
               <div className="cal-kind-pick is-fill">
                 <HeaderMenu
                   label="Mês de nascimento"
@@ -813,10 +816,12 @@ export function FinancesTab({
             </div>
           </FinanceFold>
           <FinanceFold title="Despesas" open={despesas} onToggle={() => setDespesas((open) => !open)}>
+            <A11yHint>O que sai no mês: contas, boletos e veículos.</A11yHint>
             <div id="fin-pagamentos" />
             <div id="fin-boletos" />
             <div className="flex flex-col gap-2">
               <p className="text-sm font-medium text-fg">Veículos</p>
+              <A11yHint>IPVA e licenciamento, pela placa e pelo estado.</A11yHint>
               <div className="flex items-center gap-2">
                 <div className="cal-kind-pick is-uf">
                   <HeaderMenu

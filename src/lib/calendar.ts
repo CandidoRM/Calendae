@@ -266,6 +266,7 @@ export type Period = {
   title: string;
   startIso: string;
   days: number;
+  note?: string;
 };
 
 export const PERIOD_PRESETS = ["Férias", "Folgas", "Licença"] as const;
@@ -349,8 +350,15 @@ export function periodToEvent(period: Period): CalEvent {
     iso: period.startIso,
     title: period.title,
     durationDays: Math.max(1, Math.min(366, Math.floor(period.days) || 1)),
+    note: period.note || undefined,
     source: "period",
   };
+}
+
+export function periodEnded(period: Period, today: string): boolean {
+  const isos = expandPeriod(period);
+  const last = isos[isos.length - 1] ?? period.startIso;
+  return last < today;
 }
 
 export function isPeriodEvent(event: CalEvent): boolean {
@@ -389,6 +397,17 @@ export function formatHolidaySync(cache: HolidayYearCache | undefined): string {
 
 function lastDayOfMonth(year: number, month: number): number {
   return civilDate(year, month + 1, 0).getDate();
+}
+
+export function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
+/** 29/02 só existe em ano bissexto. Nos demais, a data observada é 28/02. */
+export function birthdayIso(iso: string, year: number): string {
+  const monthDay = iso.slice(5);
+  if (monthDay === "02-29" && !isLeapYear(year)) return `${year}-02-28`;
+  return `${year}-${monthDay}`;
 }
 
 function isEveryNMonths(start: Date, date: Date, every: number): boolean {
@@ -625,6 +644,12 @@ export function followResolved(
 }
 
 export function eventMatchesIso(event: CalEvent, iso: string): boolean {
+  if (event.source === "birthday") {
+    const year = Number(iso.slice(0, 4));
+    const born = Number(event.iso.slice(0, 4));
+    if (!Number.isFinite(year) || !Number.isFinite(born) || year < born) return false;
+    return birthdayIso(event.iso, year) === iso;
+  }
   if (event.source === "benefit") {
     return event.iso === iso;
   }
@@ -640,7 +665,7 @@ export function eventMatchesIso(event: CalEvent, iso: string): boolean {
   if (event.kind === "semanal") return date.getDay() === start.getDay();
   if (event.kind === "mensal") return isEveryNMonths(start, date, 1);
   if (event.kind === "semestral") return isEveryNMonths(start, date, 6);
-  if (event.kind === "anual" || event.source === "birthday") {
+  if (event.kind === "anual") {
     return isEveryNMonths(start, date, 12);
   }
   if (event.kind === "personalizado") {
@@ -653,6 +678,12 @@ export function eventMatchesIso(event: CalEvent, iso: string): boolean {
 }
 
 export function occurrenceInMonth(event: CalEvent, year: number, month: number): string | null {
+  if (event.source === "birthday") {
+    const born = Number(event.iso.slice(0, 4));
+    if (!Number.isFinite(born) || year < born) return null;
+    const iso = birthdayIso(event.iso, year);
+    return Number(iso.slice(5, 7)) === month + 1 ? iso : null;
+  }
   if (usesOrdinal(event)) {
     const last = lastDayOfMonth(year, month);
     for (let day = 1; day <= last; day += 1) {
@@ -846,6 +877,12 @@ export function lastVisibleIso(event: CalEvent): string {
 }
 
 export function isDueForHistory(event: CalEvent, today: string, now = new Date()): boolean {
+  if (event.source === "birthday") return false;
+  if (event.source === "period") {
+    const span = eventSpanIsos(event);
+    const last = span[span.length - 1] ?? event.iso;
+    return last < today;
+  }
   if (!isOneShotEvent(event)) return false;
   if (!event.durationDays && !event.durationMinutes) return event.iso < today;
   return eventEndAt(event).getTime() <= now.getTime();
@@ -862,7 +899,7 @@ export function eventTab(event: CalEvent): CalTabId | null {
   }
   if (event.source === "birthday") return "birthdays";
   if (event.source === "benefit" || event.source === "bill" || event.source === "boleto" || event.source === "irpf" || event.source === "pis" || event.source === "ipva" || event.source === "fgts" || event.source === "bolsa" || event.source === "gas" || event.source === "licenca") return "finance";
-  if (event.source === "local" || event.source === "google") return "agenda";
+  if (event.source === "local" || event.source === "google" || event.source === "period") return "agenda";
   return null;
 }
 
@@ -878,7 +915,7 @@ export function mergeEventsById(base: CalEvent[], extra: CalEvent[]): CalEvent[]
   return add.length ? [...base, ...add] : base;
 }
 
-export type CellSquare = "today" | "election" | "holiday" | "overdue" | "birthday" | "none";
+export type CellSquare = "today" | "election" | "holiday" | "overdue" | "birthday" | "period" | "none";
 export type CellNum =
   | "pay"
   | "bill"
@@ -895,6 +932,7 @@ export type CellNum =
   | "moon-wane"
   | "eclipse"
   | "today"
+  | "period"
   | "white"
   | "fg";
 
@@ -922,13 +960,16 @@ export function cellLook(
   const dow = fromIso(cell.iso).getDay();
   const weekend = (saturdayTint && dow === 6) || (sundayTint && dow === 0);
 
+  if (birthday) {
+    return { square: "birthday", num: selected ? "white" : "fg" };
+  }
+
   let square: CellSquare = "none";
-  if (cell.isToday && birthday) square = "birthday";
-  else if (cell.isToday) square = "today";
+  if (cell.isToday) square = "today";
   else if (overdue) square = "overdue";
   else if (election) square = "election";
   else if (off) square = "holiday";
-  else if (birthday) square = "birthday";
+  else if (inPeriod && cell.inMonth) square = "period";
 
   let num: CellNum = "fg";
   if (payment) num = "pay";
@@ -945,10 +986,11 @@ export function cellLook(
   else if (commemorative) num = "commemorative";
   else if (facultative) num = "holiday";
   else if (election) num = "election";
+  else if (square === "period") num = "period";
   else if (weekend && cell.inMonth) num = "holiday";
   else if (cell.isToday) num = "today";
 
-  if (selected && (square === "today" || square === "holiday" || square === "election" || square === "birthday")) {
+  if (selected && (square === "today" || square === "holiday" || square === "election")) {
     num = "white";
   }
 
@@ -1108,6 +1150,11 @@ export function observanceYear(title: string): number | null {
   return OBSERVANCE_YEAR.find((row) => row.test(n))?.year ?? null;
 }
 
+export function observanceReached(title: string, year: number): boolean {
+  const start = observanceYear(title);
+  return start == null || year >= start;
+}
+
 const FACULTATIVE_AKA_RULES: { test: (n: string) => boolean; aka: string }[] = [
   { test: (n) => n.includes("carnaval") || n.includes("momo"), aka: "Folia de Momo" },
   { test: (n) => n.includes("cinzas"), aka: "Quaresma" },
@@ -1164,7 +1211,11 @@ export function facultativeName(name: string): boolean {
   );
 }
 
+const fallbackHolidayCache = new Map<number, CalEvent[]>();
+
 export function fallbackHolidays(year: number): CalEvent[] {
+  const hit = fallbackHolidayCache.get(year);
+  if (hit) return hit;
   const easter = easterDate(year);
   const rows: { iso: string; title: string; holidayKind: HolidayKind }[] = [
     { iso: `${year}-01-01`, title: "Confraternização Universal", holidayKind: "national" },
@@ -1185,7 +1236,9 @@ export function fallbackHolidays(year: number): CalEvent[] {
     { iso: `${year}-12-25`, title: "Natal", holidayKind: "national" },
     { iso: `${year}-12-31`, title: "Véspera de Ano-Novo", holidayKind: "facultative" },
   ];
-  return rows.map((row) => ({
+  const events = rows
+    .filter((row) => observanceReached(row.title, year))
+    .map((row) => ({
     id: `holiday-${row.iso}-${row.title}`,
     iso: row.iso,
     title: row.title,
@@ -1193,6 +1246,8 @@ export function fallbackHolidays(year: number): CalEvent[] {
     source: "holiday" as const,
     holidayKind: row.holidayKind,
   }));
+  fallbackHolidayCache.set(year, events);
+  return events;
 }
 
 export function readHolidayStore(): HolidayStore {
@@ -1246,6 +1301,7 @@ export function holidaysForYears(store: HolidayStore, years: number[]): CalEvent
     for (const event of events) {
       const next = { ...event, title: officialHolidayTitle(event) };
       if (isEasterHoliday(next)) continue;
+      if (!observanceReached(next.title, year)) continue;
       const key = `${next.iso}:${next.title}`;
       if (seen.has(key)) continue;
       seen.add(key);

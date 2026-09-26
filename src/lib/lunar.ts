@@ -163,6 +163,12 @@ function eclipseEvents(year: number): CalEvent[] {
   }));
 }
 
+const lunarYearCache = new Map<number, CalEvent[]>();
+
 export function lunarDates(year: number): CalEvent[] {
-  return [...phaseEvents(year), ...eclipseEvents(year)];
+  const hit = lunarYearCache.get(year);
+  if (hit) return hit;
+  const rows = [...phaseEvents(year), ...eclipseEvents(year)];
+  lunarYearCache.set(year, rows);
+  return rows;
 }

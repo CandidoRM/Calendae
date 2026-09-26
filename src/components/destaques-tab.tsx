@@ -117,6 +117,7 @@ export function DestaquesTab({
             <KindMark on={elections} />
             Eleições
           </button>
+          <A11yHint>Turnos da eleição. Local e zona aparecem na lista.</A11yHint>
           <div className="flex gap-2 pl-7">
             <input
               value={electionPlace}
@@ -164,6 +165,7 @@ export function DestaquesTab({
             <KindMark on={elections ? electionSecondRound : false} />
             2º turno
           </button>
+          <A11yHint>Marca o segundo turno, se houver.</A11yHint>
           <button
             type="button"
             className="flex h-7 w-full items-center gap-3 text-left text-sm"
@@ -173,6 +175,7 @@ export function DestaquesTab({
             <KindMark on={enem} />
             ENEM
           </button>
+          <A11yHint>Os dois dias de prova.</A11yHint>
           <button
             type="button"
             className="flex h-7 w-full items-center gap-3 text-left text-sm"
@@ -182,6 +185,7 @@ export function DestaquesTab({
             <KindMark on={seasons} />
             Estações
           </button>
+          <A11yHint>Início de cada estação, solstício ou equinócio.</A11yHint>
           <button
             type="button"
             className="flex h-7 w-full items-center gap-3 text-left text-sm"
@@ -191,6 +195,7 @@ export function DestaquesTab({
             <KindMark on={lunar} />
             Lunar
           </button>
+          <A11yHint>Fases da Lua e eclipses visíveis no Brasil.</A11yHint>
         </div>
       ) : null}
       {rows.length === 0 ? (

@@ -2,6 +2,7 @@ import { Paperclip, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { BarcodeScanButton } from "@/components/barcode-scan";
 import { FormSlot } from "@/components/form-slot";
+import { A11yHint } from "@/components/a11y-hint";
 import { DatePick } from "@/components/date-time-pick";
 import { useGlyphFlash } from "@/components/calendar-glyph";
 import { deleteBoletoFile, putBoletoFile } from "@/lib/boleto-file";
@@ -166,6 +167,7 @@ export function BoletosBlock({
       {adding ? (
         <div className="mt-3 flex flex-col gap-2 border-t border-line pt-3">
           <p className="text-sm font-medium text-fg">Boletos</p>
+          <A11yHint>O código preenche banco, valor e vencimento. Dá para corrigir à mão.</A11yHint>
           <div className="flex items-center">
             <input
               value={code}
@@ -290,6 +292,7 @@ export function BoletosBlock({
               <div>
                 {editing ? (
                   <div className="flex flex-col gap-2 pb-3">
+                    <A11yHint>O código preenche banco, valor e vencimento. Dá para corrigir à mão.</A11yHint>
                     <div className="flex items-center">
                       <input
                         value={editCode}

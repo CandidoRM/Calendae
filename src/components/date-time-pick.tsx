@@ -8,6 +8,13 @@ function pad(n: number): string {
   return String(n).padStart(2, "0");
 }
 
+function partsOf(value: string): { day: string; month: string; year: string } {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (match) return { year: match[1], month: match[2], day: match[3] };
+  const date = fromIso(value);
+  return { day: pad(date.getDate()), month: pad(date.getMonth() + 1), year: String(date.getFullYear()) };
+}
+
 function validDate(year: number, month: number, day: number): string | null {
   if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
   if (year < YEAR_MIN || year > YEAR_MAX || month < 1 || month > 12 || day < 1 || day > 31) return null;
@@ -124,8 +131,8 @@ function DateCal({
   weekStart?: "sunday" | "monday";
   onPick: (iso: string) => void;
 }) {
-  const selected = fromIso(value);
-  const [cursor, setCursor] = useState(() => civilDate(selected.getFullYear(), selected.getMonth(), 1));
+  const selected = partsOf(value);
+  const [cursor, setCursor] = useState(() => civilDate(Number(selected.year), Number(selected.month) - 1, 1));
   const year = cursor.getFullYear();
   const month = cursor.getMonth();
   const firstDow = civilDate(year, month, 1).getDay();
@@ -136,13 +143,13 @@ function DateCal({
   return (
     <div className="cal-dt-cal">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <button type="button" className="cal-dt-nav" aria-label="Mês anterior" onClick={() => setCursor(civilDate(year, month - 1, 1))}>
+        <button type="button" className="cal-dt-nav cal-icon-tip" data-tip="Mês anterior" aria-label="Mês anterior" onClick={() => setCursor(civilDate(year, month - 1, 1))}>
           <ChevronLeft className="size-4" />
         </button>
         <p className="m-0 flex-1 text-center text-sm capitalize text-fg">
           {MONTHS[month]} {year}
         </p>
-        <button type="button" className="cal-dt-nav" aria-label="Próximo mês" onClick={() => setCursor(civilDate(year, month + 1, 1))}>
+        <button type="button" className="cal-dt-nav cal-icon-tip" data-tip="Próximo mês" aria-label="Próximo mês" onClick={() => setCursor(civilDate(year, month + 1, 1))}>
           <ChevronRight className="size-4" />
         </button>
       </div>
@@ -495,16 +502,16 @@ export function DatePick({
   const monthRef = useRef<HTMLInputElement>(null);
   const yearRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
-  const date = fromIso(value);
-  const [day, setDay] = useState(() => pad(date.getDate()));
-  const [month, setMonth] = useState(() => pad(date.getMonth() + 1));
-  const [year, setYear] = useState(() => String(date.getFullYear()));
+  const initial = partsOf(value);
+  const [day, setDay] = useState(initial.day);
+  const [month, setMonth] = useState(initial.month);
+  const [year, setYear] = useState(initial.year);
 
   useEffect(() => {
-    const next = fromIso(value);
-    setDay(pad(next.getDate()));
-    setMonth(pad(next.getMonth() + 1));
-    setYear(String(next.getFullYear()));
+    const next = partsOf(value);
+    setDay(next.day);
+    setMonth(next.month);
+    setYear(next.year);
   }, [value]);
 
   function emit(d: string, m: string, y: string) {

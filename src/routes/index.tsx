@@ -6,7 +6,7 @@ import { SHOW_TEST_SCREEN } from "@/lib/test-screen";
 
 export const Route = createFileRoute("/")({ component: Home });
 
-const TEST_ROUND = 3;
+const TEST_ROUND = 6;
 
 function Home() {
   const [seen, setSeen] = useState(0);

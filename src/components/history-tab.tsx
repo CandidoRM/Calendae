@@ -29,7 +29,7 @@ export function HistoryTab({ events, openId, onOpen, onRemove, onReschedule, hou
   }, [openId]);
 
   return (
-    <section className="cal-tab">
+    <section className="cal-tab" data-cal-tab="history">
       <div className="cal-tab-head">
         <h2 className="cal-tab-title">Histórico</h2>
       </div>
@@ -77,7 +77,11 @@ export function HistoryTab({ events, openId, onOpen, onRemove, onReschedule, hou
                     <span className="capitalize">
                       {MONTHS[day.getMonth()].slice(0, 3)} {year}
                     </span>
-                    {event.time ? <span>{formatTime(event.time, hourCycle)}</span> : null}
+                    {event.source === "period" ? (
+                      <span>{event.durationDays === 1 ? "1 dia" : `${event.durationDays ?? 1} dias`}</span>
+                    ) : event.time ? (
+                      <span>{formatTime(event.time, hourCycle)}</span>
+                    ) : null}
                   </span>
                 </button>
                 <div className={cn("cal-event-details", open && "is-open")}>
@@ -103,6 +107,7 @@ export function HistoryTab({ events, openId, onOpen, onRemove, onReschedule, hou
                         <p className="capitalize text-muted">
                           {weekdayName(event.iso)}
                           {event.place ? ` · ${event.place}` : ""}
+                          {event.note ? ` · ${event.note}` : ""}
                         </p>
                         {event.contact ? (
                           <p className="mt-1 text-muted">

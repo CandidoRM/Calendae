@@ -269,11 +269,10 @@ export function BenefitsTab({
 
   const body = (
     <>
-      {framed || adding ? (
+      {framed ? (
       <div className="cal-tab-head">
-        <h2 className={framed ? "cal-tab-title" : "translate-y-3 text-sm font-medium text-fg"}>INSS</h2>
-        {framed ? (
-          <Button
+        <h2 className="cal-tab-title">INSS</h2>
+        <Button
             variant="ghost"
             size="icon"
             {...withTip("Novo")}
@@ -286,13 +285,20 @@ export function BenefitsTab({
           >
             <CalendarGlyph className="size-5" flash={glyphFlash} />
           </Button>
-        ) : null}
       </div>
       ) : null}
       {framed ? <A11yHint>Dia em que o benefício do INSS cai na conta.</A11yHint> : null}
       <FormSlot id={formSlot}>
       {adding ? (
-        <div className="mt-3 flex flex-col gap-2 border-t border-line pt-3">{formFields}</div>
+        <div className="flex flex-col gap-2">
+          {framed ? null : (
+            <>
+              <p className="text-sm font-medium text-fg">INSS</p>
+              <A11yHint>Dia em que o benefício do INSS cai na conta.</A11yHint>
+            </>
+          )}
+          {formFields}
+        </div>
       ) : null}
       </FormSlot>
       {visible.length === 0 ? null : (

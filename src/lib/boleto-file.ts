@@ -25,6 +25,16 @@ export async function putBoletoFile(id: string, file: File): Promise<void> {
   });
 }
 
+export async function getBoletoFile(id: string): Promise<BoletoFile | null> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readonly");
+    const req = tx.objectStore(STORE).get(id);
+    req.onsuccess = () => resolve((req.result as BoletoFile | undefined) ?? null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
 export async function deleteBoletoFile(id: string): Promise<void> {
   const db = await openDb();
   await new Promise<void>((resolve, reject) => {

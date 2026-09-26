@@ -10,24 +10,56 @@ function empty(): Store {
   return { triedYear: null, dates: {} };
 }
 
+let moonMem: Store | null = null;
+
 function readStore(): Store {
+  if (moonMem) return moonMem;
   if (typeof localStorage === "undefined") return empty();
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return empty();
+    if (!raw) {
+      moonMem = empty();
+      return moonMem;
+    }
     const parsed = JSON.parse(raw) as Partial<Store>;
-    return {
+    moonMem = {
       triedYear: typeof parsed.triedYear === "number" ? parsed.triedYear : null,
       dates: parsed.dates && typeof parsed.dates === "object" ? parsed.dates : {},
     };
+    return moonMem;
   } catch {
-    return empty();
+    moonMem = empty();
+    return moonMem;
   }
 }
 
 function writeStore(store: Store) {
+  moonMem = store;
   if (typeof localStorage === "undefined") return;
   localStorage.setItem(KEY, JSON.stringify(store));
+}
+
+const moonComputed = new Map<number, string>();
+
+/**
+ * Festival da Lua = 15º dia do 8º mês lunar.
+ * O 8º mês é o que contém o equinócio de setembro.
+ * O dia civil é o da China (UTC+8), que é a data oficial do festival.
+ */
+export function computedMoonFestivalIso(year: number): string {
+  const hit = moonComputed.get(year);
+  if (hit) return hit;
+  const equinox = septemberEquinox(year);
+  const k0 = Math.floor((year - 2000) * 12.3685);
+  let start: Date | null = null;
+  for (let k = k0 - 3; k <= k0 + 16; k += 1) {
+    const moon = lunarPhaseInstant(k, 0);
+    if (moon.getTime() <= equinox.getTime()) start = moon;
+    else if (start) break;
+  }
+  const iso = start ? addDays(shanghaiIso(start), 14) : `${year}-09-15`;
+  moonComputed.set(year, iso);
+  return iso;
 }
 
 function shanghaiIso(date: Date): string {
@@ -46,24 +78,6 @@ function addDays(iso: string, days: number): string {
   const m = String(date.getUTCMonth() + 1).padStart(2, "0");
   const d = String(date.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
-}
-
-/**
- * Festival da Lua = 15º dia do 8º mês lunar.
- * O 8º mês é o que contém o equinócio de setembro.
- * O dia civil é o da China (UTC+8), que é a data oficial do festival.
- */
-export function computedMoonFestivalIso(year: number): string {
-  const equinox = septemberEquinox(year);
-  const k0 = Math.floor((year - 2000) * 12.3685);
-  let start: Date | null = null;
-  for (let k = k0 - 3; k <= k0 + 16; k += 1) {
-    const moon = lunarPhaseInstant(k, 0);
-    if (moon.getTime() <= equinox.getTime()) start = moon;
-    else if (start) break;
-  }
-  if (!start) return `${year}-09-15`;
-  return addDays(shanghaiIso(start), 14);
 }
 
 export function moonFestivalIso(year: number): string {

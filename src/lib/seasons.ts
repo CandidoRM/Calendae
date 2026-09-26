@@ -44,7 +44,12 @@ function meanJde(year: number, which: 0 | 1 | 2 | 3): number {
   return 2451900.05952 + 365242.74049 * y - 0.06223 * y * y - 0.00823 * y ** 3 + 0.00032 * y ** 4;
 }
 
+const seasonCache = new Map<string, Date>();
+
 function seasonInstant(year: number, which: 0 | 1 | 2 | 3): Date {
+  const key = `${year}:${which}`;
+  const hit = seasonCache.get(key);
+  if (hit) return hit;
   const jde0 = meanJde(year, which);
   const t = (jde0 - 2451545) / 36525;
   let s = 0;
@@ -52,7 +57,9 @@ function seasonInstant(year: number, which: 0 | 1 | 2 | 3): Date {
   const w = (35999.373 * t - 2.47) * DEG;
   const dl = 1 + 0.0334 * Math.cos(w) + 0.0007 * Math.cos(2 * w);
   const jde = jde0 + (0.00001 * s) / dl;
-  return new Date((jde - 2440587.5) * 86400000);
+  const date = new Date((jde - 2440587.5) * 86400000);
+  seasonCache.set(key, date);
+  return date;
 }
 
 /** Equinócio de setembro: outono no norte, primavera no sul. */
@@ -76,9 +83,13 @@ const SEASONS: { which: 0 | 1 | 2 | 3; title: string; detail: string }[] = [
   { which: 3, title: "Verão", detail: "Solstício" },
 ];
 
+const seasonYearCache = new Map<number, CalEvent[]>();
+
 /** Estações do hemisfério sul, no dia civil de Brasília. */
 export function seasonDates(year: number): CalEvent[] {
-  return SEASONS.map((season) => {
+  const hit = seasonYearCache.get(year);
+  if (hit) return hit;
+  const rows = SEASONS.map((season) => {
     const iso = brasiliaIso(seasonInstant(year, season.which));
     return {
       id: `season-${year}-${season.title}`,
@@ -90,4 +101,6 @@ export function seasonDates(year: number): CalEvent[] {
       confirmed: true,
     };
   });
+  seasonYearCache.set(year, rows);
+  return rows;
 }

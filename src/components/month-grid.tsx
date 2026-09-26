@@ -80,6 +80,7 @@ export function MonthGrid({
         const inPeriod = periodIsos.has(cell.iso) && cell.inMonth;
         const look = cellLook(cell, selected, inPeriod, saturdayTint, sundayTint, holidayTint, today);
         const hasMark = cell.events.some((event) => eventMarksGrid(event, cell.iso));
+        const hasBirthday = cell.events.some((event) => event.source === "birthday");
         return (
           <button
             key={cell.iso}
@@ -91,11 +92,11 @@ export function MonthGrid({
               "cal-cell",
               !cell.inMonth && "is-out",
               selected && "is-selected",
+              hasBirthday && "has-birthday",
               `sq-${look.square}`,
               `nm-${look.num}`,
             )}
             onPointerDown={(event) => holdStart(cell.iso, event)}
-            onSelectStart={(event) => event.preventDefault()}
             onContextMenu={(event) => event.preventDefault()}
             onClick={() => {
               if (held.current === cell.iso) {

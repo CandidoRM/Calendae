@@ -1,4 +1,4 @@
-import { formatTime, fromIso, isDueForHistory, ordinalIso, takeLocal, todayIso, toIso, usesOrdinal, type CalEvent, type HourCycle } from "@/lib/calendar";
+import { birthdayIso, formatTime, fromIso, isDueForHistory, ordinalIso, takeLocal, todayIso, toIso, usesOrdinal, type CalEvent, type HourCycle } from "@/lib/calendar";
 
 const FIRED_KEY = "calendae-reminders-fired";
 const LEGACY_FIRED_KEY = "almanaque-reminders-fired";
@@ -34,6 +34,19 @@ export function nextReminderAt(event: CalEvent, now = new Date()): Date | null {
     : new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0, 0);
   if (!start) return null;
   if (!event.kind) return start.getTime() > now.getTime() - CHECK_MS || toIso(start) === toIso(now) ? start : null;
+  if (event.source === "birthday") {
+    const born = Number(event.iso.slice(0, 4));
+    let year = Math.max(now.getFullYear(), Number.isFinite(born) ? born : now.getFullYear());
+    for (let i = 0; i < 4; i += 1) {
+      const day = fromIso(birthdayIso(event.iso, year));
+      const when =
+        eventWhen(event, day) ??
+        new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0, 0);
+      if (when.getTime() > now.getTime() - CHECK_MS || toIso(when) === toIso(now)) return when;
+      year += 1;
+    }
+    return null;
+  }
   let cursor = start;
   for (let i = 0; i < 48; i += 1) {
     if (cursor.getTime() > now.getTime() - CHECK_MS || toIso(cursor) === toIso(now)) return cursor;

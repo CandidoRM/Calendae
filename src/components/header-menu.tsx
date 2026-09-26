@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useGlyphFlash } from "@/components/calendar-glyph";
 import { cn } from "@/lib/utils";
 
 type Option<T extends string | number> = {
@@ -49,6 +50,8 @@ export function HeaderMenu<T extends string | number>({
   const onCloseRef = useRef(onClose);
   const optionsRef = useRef(options);
   const opened = useRef(false);
+  const [titleFlash, pingTitle] = useGlyphFlash();
+  const isTitle = buttonClassName?.includes("cal-month-btn") ?? false;
   valueRef.current = value;
   onPickRef.current = onPick;
   onCloseRef.current = onClose;
@@ -255,13 +258,14 @@ export function HeaderMenu<T extends string | number>({
       <button
         ref={buttonRef}
         type="button"
-        className={cn(buttonClassName, disabled && "cursor-not-allowed opacity-45")}
+        className={cn(buttonClassName, isTitle && titleFlash && "is-flash", disabled && "cursor-not-allowed opacity-45")}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={label}
         disabled={disabled}
         onClick={() => {
           if (disabled) return;
+          if (isTitle) pingTitle();
           open ? commit() : onOpen();
         }}
       >

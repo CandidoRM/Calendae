@@ -104,18 +104,27 @@ export function buildAlmanacYear(year: number): AlmanacYear {
   };
 }
 
+let almanacMem: AlmanacStore | null = null;
+
 export function readAlmanacStore(): AlmanacStore {
+  if (almanacMem) return almanacMem;
   try {
     const raw = takeLocal(ALMANAC_KEY, "almanaque-almanac");
-    if (!raw) return {};
+    if (!raw) {
+      almanacMem = {};
+      return almanacMem;
+    }
     const parsed = JSON.parse(raw) as AlmanacStore;
-    return parsed && typeof parsed === "object" ? parsed : {};
+    almanacMem = parsed && typeof parsed === "object" ? parsed : {};
+    return almanacMem;
   } catch {
-    return {};
+    almanacMem = {};
+    return almanacMem;
   }
 }
 
 function writeAlmanacStore(store: AlmanacStore) {
+  almanacMem = store;
   try {
     if (typeof localStorage === "undefined") return;
     localStorage.setItem(ALMANAC_KEY, JSON.stringify(store));

@@ -196,9 +196,9 @@ export function PaymentsTab({
         <h2 className={framed ? "cal-tab-title" : "translate-y-1/2 text-sm font-medium text-fg"}>Pagamentos</h2>
       </div>
       ) : null}
-      {framed ? <A11yHint>Contas a pagar no mês. Repetem sozinhas no mês seguinte.</A11yHint> : null}
+      {framed || adding ? <A11yHint>Contas a pagar no mês. Repetem sozinhas no mês seguinte.</A11yHint> : null}
       {adding ? (
-      <div className="mt-3 flex flex-col gap-2 border-t border-line pt-3">
+      <div className="mt-3 flex flex-col gap-2 pt-3">
         <p className="text-sm text-muted">
           {start.getDate()} de <span className="capitalize">{MONTHS[start.getMonth()]}</span>
         </p>
